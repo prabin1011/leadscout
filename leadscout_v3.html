@@ -1,0 +1,1893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>LeadScout AI v3.0 — Multi-Agent Marketing Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#0b0d10;--bg2:#12161b;--bg3:#171d24;--bg4:#202833;
+--br:rgba(255,255,255,0.08);--br2:rgba(255,255,255,0.14);--br3:rgba(255,255,255,0.22);
+--tx:#eef1f4;--tx2:#a1aab6;--tx3:#667180;
+--ac:#4f7cff;--ac2:#86a5ff;--ac3:rgba(79,124,255,0.09);--ac4:rgba(79,124,255,0.16);
+--gn:#2fbd82;--gn2:rgba(47,189,130,0.09);--gn3:rgba(47,189,130,0.22);
+--am:#d89a2b;--am2:rgba(216,154,43,0.1);--am3:rgba(216,154,43,0.22);
+--rd:#ef5d6f;--rd2:rgba(239,93,111,0.1);--rd3:rgba(239,93,111,0.22);
+--pu:#9b7cff;--pu2:rgba(155,124,255,0.09);
+--fn:'DM Sans',-apple-system,sans-serif;--mo:'JetBrains Mono',monospace;
+}
+html,body,#root{height:100%;background:var(--bg);color:var(--tx);font-family:var(--fn);font-size:14px;-webkit-font-smoothing:antialiased}
+button{font-family:var(--fn);cursor:pointer;border:none;background:none}
+input,select,textarea{font-family:var(--fn)}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--br2);border-radius:2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:translateX(0)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.fade-up{animation:fadeUp .3s ease both}
+.slide-in{animation:slideIn .25s ease both}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.8.0/umd/Recharts.js"></script>
+<script>
+/* LeadScout AI - Complete Application */
+const {useState, useEffect, useRef} = React;
+var _rc = (typeof Recharts !== 'undefined') ? Recharts : {};
+var BarChart = _rc.BarChart || function(p){return React.createElement('div',null,p.children);};
+var Bar = _rc.Bar || function(){return null;};
+var XAxis = _rc.XAxis || function(){return null;};
+var YAxis = _rc.YAxis || function(){return null;};
+var Tooltip = _rc.Tooltip || function(){return null;};
+var ResponsiveContainer = _rc.ResponsiveContainer || function(p){return React.createElement('div',{style:{width:'100%',height:p.height||200}},p.children);};
+
+// ─── GLOBAL STATE ────────────────────────────────────────────────────────────
+var _apiKey = '';
+function getApiKey() { return _apiKey; }
+function setApiKey(k) { _apiKey = k; }
+
+// ─── DATA ────────────────────────────────────────────────────────────────────
+
+const AGENT_LIST = [
+  {id:'maps',   name:'Maps Scout',        short:'Maps',    icon:'MAP', color:'#22d3ee', cbg:'rgba(34,211,238,.1)',
+   desc:'Crawls Google Maps across all result pages for the keyword+location query. Extracts business names, addresses, phones, ratings, review counts, websites and map rankings.',
+   tech:['Playwright','Google Maps','Pagination Handler','DOM Parser'], out:['name','address','phone','rating','reviews','mapsRank'], time:'12-18s'},
+  {id:'gmb',    name:'GMB Extractor',     short:'GMB',     icon:'PIN', color:'#f5a623', cbg:'rgba(245,166,35,.1)',
+   desc:'Deep-parses Google Business Profiles. Extracts hours, categories, service menus, Q&A, photos, booking integrations and post history.',
+   tech:['GMB API','Schema.org Parser','Structured Data','GBP Enricher'], out:['hours','categories','services','bookingUrl'], time:'8-14s'},
+  {id:'gads',   name:'Google Ads Agent',  short:'G.Ads',   icon:'SRC', color:'#3b6fff', cbg:'rgba(59,111,255,.1)',
+   desc:'Queries Google Ads Transparency Center for each discovered domain. Extracts live ad copy, keyword signals, spend tier estimates and ad strength scores.',
+   tech:['Ads Transparency API','Domain Matcher','NLP Extractor','Spend Estimator'], out:['adCopy','headlines','keywords','spendTier'], time:'10-16s'},
+  {id:'meta',   name:'Meta Ads Agent',    short:'Meta',    icon:'GRF', color:'#a855f7', cbg:'rgba(168,85,247,.1)',
+   desc:'Queries the Meta Ad Library for each business. Extracts active creatives, campaign objectives, targeting signals and ad duration for fatigue detection.',
+   tech:['Meta Ad Library API','Creative Analyzer','CV Model','Fatigue Detector'], out:['creatives','objective','targeting','duration'], time:'9-15s'},
+  {id:'profile',name:'Profile Builder',   short:'Profile', icon:'BLD', color:'#00cc7a', cbg:'rgba(0,204,122,.1)',
+   desc:'Uses Claude AI to synthesise all collected signals into a structured company profile with opportunity analysis, ad gap scoring and outreach recommendations.',
+   tech:['Claude claude-sonnet-4-20250514','RAG Pipeline','Prompt Chain','Data Synthesiser'], out:['profile','opportunities','score'], time:'6-10s'},
+  {id:'web',    name:'Website Auditor',  short:'Web',     icon:'WEB', color:'#22d3ee', cbg:'rgba(34,211,238,.1)',
+   desc:'Checks each discovered domain for existence, runs PageSpeed/Lighthouse analysis, detects HTTPS, mobile-friendliness, tech stack and scores website quality 0-100.',
+   tech:['PageSpeed API','Lighthouse','SSL Check','Wappalyzer'], out:['hasWebsite','webScore','webGrade','webIssues'], time:'8-14s'},
+  {id:'scorer', name:'Opportunity Scorer',short:'Scorer',  icon:'ZAP', color:'#f472b6', cbg:'rgba(244,114,182,.1)',
+   desc:'Scores each lead 0-100 based on ad gap, website quality, market position, review sentiment and keyword opportunity. Ranks the full pipeline.',
+   tech:['Weighted Scoring','Sentiment NLP','Market Signals','ML Ranker'], out:['opportunityScore','rank','priority'], time:'3-5s'},
+];
+
+var COMPANIES = [];
+var API_BASE = window.location.origin;
+
+function countryCodeFromLocation(loc) {
+  var s = (loc || '').toLowerCase();
+  if (/uk|united kingdom|england|london|manchester|birmingham/.test(s)) return 'GB';
+  if (/italy|rome|milan|italia/.test(s)) return 'IT';
+  if (/france|paris/.test(s)) return 'FR';
+  if (/germany|berlin|munich/.test(s)) return 'DE';
+  if (/spain|madrid|barcelona/.test(s)) return 'ES';
+  if (/united states|usa|new york|los angeles|chicago|miami|austin|dallas/.test(s)) return 'US';
+  if (/canada|toronto|vancouver/.test(s)) return 'CA';
+  if (/new zealand|auckland|wellington/.test(s)) return 'NZ';
+  return 'AU';
+}
+
+function safeConnectorFetch(path, options) {
+  return fetch(API_BASE + path, options || {}).then(function(r) { return r.json(); });
+}
+
+function verifyMetaAdsForCompanies(companies, loc, onLog, onUpdate) {
+  var country = countryCodeFromLocation(loc);
+  return safeConnectorFetch('/api/health').then(function(health) {
+    if (!health || !health.metaConfigured) {
+      companies.forEach(function(co) {
+        co.metaSource = 'estimated';
+        co.metaStatus = 'needs_token';
+        co.metaCoverageNote = 'Meta connector is ready, but META_ACCESS_TOKEN is not set on the local backend.';
+      });
+      onLog({t:'warn', m:'[META ADS] Backend connector ready, but no META_ACCESS_TOKEN found. Keeping Meta results as estimates.'});
+      onUpdate();
+      return;
+    }
+
+    onLog({t:'info', m:'[META ADS] Meta API token found. Verifying Ad Library signals for ' + companies.length + ' companies...'});
+    var chain = Promise.resolve();
+    companies.forEach(function(co) {
+      chain = chain.then(function() {
+        co.metaStatus = 'checking';
+        onUpdate();
+        return safeConnectorFetch('/api/meta-ads/search', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({name:co.name, country:country, limit:8})
+        }).then(function(data) {
+          co.metaStatus = data.ok ? 'verified' : 'api_limited';
+          co.metaSource = data.ok ? 'verified' : 'estimated';
+          co.metaVerified = !!data.ok;
+          co.metaApi = data;
+          co.metaAdsCount = data.totalReturned || 0;
+          co.metaCoverageNote = data.coverageNote || data.message || 'Meta API did not return verified commercial-ad coverage for this market.';
+          if (data.ok) {
+            co.mads = data.totalReturned > 0;
+            co.ms = data.totalReturned > 0 ? Math.min(95, 45 + data.totalReturned * 5) : 0;
+            if (data.ads && data.ads[0]) {
+              co.mt = data.ads[0].page_name || co.name;
+              co.md = 'Verified via Meta Ad Library API. Review creative snapshot for exact copy and format.';
+              co.mdur = data.ads[0].ad_delivery_start_time ? 'since ' + data.ads[0].ad_delivery_start_time : co.mdur;
+            }
+            onLog({t:'success', m:'[META ADS] Verified ' + co.name + ': ' + data.totalReturned + ' Ad Library records returned'});
+          } else {
+            onLog({t:'warn', m:'[META ADS] ' + co.name + ': API not conclusive (' + (data.reason || 'limited coverage') + ')'});
+          }
+          onUpdate();
+        }).catch(function(err) {
+          co.metaStatus = 'connector_error';
+          co.metaSource = 'estimated';
+          co.metaCoverageNote = err.message;
+          onLog({t:'warn', m:'[META ADS] ' + co.name + ': connector error - ' + err.message});
+          onUpdate();
+        });
+      });
+    });
+    return chain;
+  }).catch(function(err) {
+    companies.forEach(function(co) {
+      co.metaSource = 'estimated';
+      co.metaStatus = 'backend_offline';
+      co.metaCoverageNote = err.message;
+    });
+    onLog({t:'warn', m:'[META ADS] Backend connector unavailable. Start server.js to enable verification.'});
+    onUpdate();
+  });
+}
+
+// ─── BUSINESS GENERATOR ──────────────────────────────────────────────────────
+function generateCompanies(kw, loc, count) {
+  var kwL = (kw || 'business').toLowerCase().trim();
+  var locName = (loc || 'Sydney').trim();
+  count = Math.max(4, Math.min(parseInt(count) || 12, 30));
+
+  var suburbs = ['CBD','Surry Hills','Newtown','Paddington','Glebe','Darlinghurst','Pyrmont','Chippendale','Redfern','Alexandria','Parramatta','Chatswood','Bondi','Manly','Mosman','Kirribilli','Neutral Bay','Balmain','Leichhardt','Marrickville','Crows Nest','St Leonards','Randwick','Kingsford','Kogarah','Hurstville','Burwood','Strathfield','Castle Hill','Penrith'];
+  var palette = ['#3b6fff','#00cc7a','#a855f7','#f5a623','#22d3ee','#f472b6','#ef4444','#10b981','#6366f1','#ec4899','#14b8a6','#f97316','#84cc16','#0ea5e9','#d946ef','#fb923c'];
+  var firstNames = ['Smith','Johnson','Williams','Brown','Davis','Miller','Wilson','Moore','Taylor','Anderson','Thomas','Jackson','White','Harris','Martin','Thompson','Garcia','Martinez','Robinson','Clark','Rodriguez','Lewis','Lee','Walker','Hall','Allen','Young','King','Wright','Scott'];
+  var streets = [['George St',2000],['Pitt St',2000],['King St',2042],['Crown St',2010],['Oxford St',2010],['Elizabeth St',2000],['Sussex St',2000],['Clarence St',2000],['York St',2000],['Kent St',2000],['Miller St',2060],['Pacific Hwy',2065],['Military Rd',2089],['Victoria Ave',2122],['Church St',2150],['Parramatta Rd',2050],['Illawarra Rd',2204],['Marrickville Rd',2204],['Botany Rd',2019],['Princes Hwy',2216]];
+
+  function rnd(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
+  function rndF(min,max,dp){return parseFloat((Math.random()*(max-min)+min).toFixed(dp||1));}
+  function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+
+  // Detect business category & configure templates
+  var cat, nameTemplates, catGroups, kwTerms;
+  if (/restaurant|cafe|coffee|food|dining|bistro|pizza|burger|sushi|thai|chinese|indian|italian|mexican|japanese|korean|vietnamese|eatery|kitchen|grill/.test(kwL)) {
+    cat='Restaurant'; kwTerms=['best restaurant','book a table','lunch specials','dinner reservations','takeaway','private dining'];
+    nameTemplates=['{sub} Kitchen','{sub} Bistro','{name}\'s Restaurant','The {sub} Table','{sub} Eatery','{name}\'s Kitchen','{sub} Bar & Grill','{name}\'s {sub} Bistro','The {name} Restaurant','{sub} Brasserie','{sub} Canteen','{sub} Garden','{sub} House','{name} & Sons','{sub} Corner'];
+    catGroups=[['Modern Australian','Seasonal','Wine Bar'],['Italian','Pasta','Pizza'],['Japanese','Sushi','Ramen'],['Chinese','Yum Cha','Seafood'],['Thai','Asian','Street Food'],['Indian','Curry','Vegetarian'],['Mexican','Tacos','Bar'],['Mediterranean','Mezze','Tapas'],['Vietnamese','Pho','Asian'],['French','Fine Dining','European'],['American','Burgers','Craft Beer'],['Korean','BBQ','Asian Fusion']];
+  } else if (/physio|physiother/.test(kwL)) {
+    cat='Physiotherapy'; kwTerms=['physiotherapy near me','sports physio','back pain treatment','physio clinic','physiotherapist'];
+    nameTemplates=['{sub} Physiotherapy','{sub} Physio & Sports','{name} Physio','{sub} Sports Physio','Active {sub} Physio','{sub} Movement Clinic','{name} Physiotherapy','Total {sub} Physio','{sub} Rehab & Physio','Elite {sub} Physiotherapy','{sub} Health & Physio','{name} Sports Medicine'];
+    catGroups=[['Sports Physio','Rehabilitation','Dry Needling'],['Women\'s Health','Pilates','Injury Prevention'],['Post-Surgery Rehab','Manual Therapy','Exercise'],['Sports Injury','Spinal','Neck & Back'],['NDIS','Paediatric','Aged Care'],['Hydrotherapy','Massage','Mobility']];
+  } else if (/dental|dentist|teeth|orthodon|smile/.test(kwL)) {
+    cat='Dental Clinic'; kwTerms=['dentist near me','emergency dentist','teeth whitening','dental implants','orthodontist'];
+    nameTemplates=['{sub} Dental','Smile {sub}','{sub} Dental Centre','{name} Dental','{sub} Smiles','Perfect Teeth {sub}','{sub} Orthodontics','Bright Smile {sub}','{sub} Dental Group','{name} & Associates Dental','{sub} Family Dental','Clear Smile {sub}'];
+    catGroups=[['General Dentistry','Cosmetic','Emergency'],['Orthodontics','Invisalign','Braces'],['Implants','Whitening','Veneers'],['Children\'s Dentistry','Family','Preventive'],['Cosmetic','Smile Makeover','Crowns'],['General','Extractions','Fillings']];
+  } else if (/law|legal|solicitor|lawyer|attorney/.test(kwL)) {
+    cat='Law Firm'; kwTerms=['lawyer near me','legal advice','solicitor consultation','law firm','legal services'];
+    nameTemplates=['{name} & Associates','{sub} Legal','{name} Lawyers','{sub} Law Group','{name} Solicitors','{sub} Legal Partners','The {sub} Law Firm','{name} & Partners','{sub} Barristers','{name} Legal Services','{sub} Law Chambers','{name} & Co Lawyers'];
+    catGroups=[['Family Law','Divorce','Property Settlement'],['Criminal Law','Traffic','Defence'],['Property Law','Conveyancing','Leasing'],['Commercial Law','Business','Contracts'],['Employment Law','Workplace','Injury'],['Immigration Law','Visa','Citizenship']];
+  } else if (/gym|fitness|personal train|crossfit|yoga|pilates|sport/.test(kwL)) {
+    cat='Fitness Studio'; kwTerms=['gym near me','personal trainer','fitness classes','crossfit','yoga studio'];
+    nameTemplates=['{sub} Fitness','{sub} CrossFit','Iron {sub}','{sub} Strength','Move {sub}','{name} Training','{sub} Performance','Elite {sub} Fitness','{sub} Studio','Force {sub}','{sub} Athletic','{name} Coaching'];
+    catGroups=[['CrossFit','Strength','HIIT'],['Personal Training','Weight Loss','Nutrition'],['Yoga','Pilates','Mindfulness'],['Boxing','Martial Arts','Kickboxing'],['Functional Fitness','Group Classes','Cardio'],['Olympic Lifting','Powerlifting','Conditioning']];
+  } else if (/beauty|salon|hair|nail|spa|massage|barber/.test(kwL)) {
+    cat='Beauty & Wellness'; kwTerms=['hair salon near me','beauty salon','massage therapy','nail salon','spa treatment'];
+    nameTemplates=['{sub} Beauty','{name}\'s Salon','Glow {sub}','{sub} Hair & Beauty','Luxe {sub}','{sub} Spa','Pure {sub} Beauty','{name} Beauty Studio','{sub} Aesthetics','The {sub} Salon','{sub} Skin & Beauty','{name} Hair'];
+    catGroups=[['Hair Styling','Colour','Keratin'],['Nails','Gel','Acrylic','Pedicure'],['Massage','Facials','Body Treatments'],['Lashes','Brows','Waxing'],['Skin Care','Anti-Aging','LED Therapy'],['Spray Tan','Makeup','Bridal']];
+  } else if (/plumb|electrician|handyman|trade|builder|carpenter|painter/.test(kwL)) {
+    cat='Trades & Services'; kwTerms=['tradesman near me','emergency service','licensed professional','local tradie','fast response'];
+    nameTemplates=['{sub} Plumbing','{name} Electrical','{sub} Building','{name} & Sons','{sub} Handyman','Pro {sub} Services','{name} Plumbing & Gas','{sub} Solutions','Fast {sub} Trades','{name} Building Services','{sub} Maintenance','{name} & Co Trades'];
+    catGroups=[['Emergency','Gas Fitting','Drainage'],['Electrical','Solar','Data Cabling'],['Carpentry','Renovation','Fit-out'],['Painting','Plastering','Rendering'],['General Building','Extensions','Decks'],['Tiling','Flooring','Waterproofing']];
+  } else if (/accountant|accounting|bookkeep|tax|financial|finance|mortgage/.test(kwL)) {
+    cat='Financial Services'; kwTerms=['accountant near me','tax return','bookkeeper','financial advisor','mortgage broker'];
+    nameTemplates=['{name} & Co Accounting','{sub} Accounting','{name} Financial','{sub} Tax & Accounting','Smart {sub} Finance','{name} Advisory','{sub} Financial Planning','Clarity {sub}','{name} Partners','{sub} Business Advisory','{name} CPA','{sub} Wealth'];
+    catGroups=[['Tax Returns','BAS','Bookkeeping'],['Business Advisory','CFO Services','Growth'],['Financial Planning','Superannuation','Retirement'],['Mortgage Broking','Home Loans','Refinance'],['SMSF','Investment','Wealth Management'],['Audit','Compliance','Corporate']];
+  } else {
+    var kwCap = kwL.charAt(0).toUpperCase()+kwL.slice(1);
+    cat=kwCap+' Services'; kwTerms=[kwL+' near me','best '+kwL,kwL+' '+locName.toLowerCase(),'local '+kwL,'professional '+kwL];
+    nameTemplates=['{sub} '+kwCap,'{name} '+kwCap,'The {sub} '+kwCap,'{sub} Pro '+kwCap,'Premium {sub}','{name} & Co','{sub} '+kwCap+' Group','Expert {sub} '+kwCap,'{name} '+kwCap+' Services','Top {sub} '+kwCap,'{sub} '+kwCap+' Centre','{name}\'s '+kwCap];
+    catGroups=[['Professional Services','Local','Expert Team'],['Premium Quality','Trusted','Experienced'],['Fast Service','Affordable','Reliable'],['Certified','Licensed','Insured'],['Residential','Commercial','Corporate'],['Consultation','Ongoing Support','Emergency']];
+  }
+
+  var hourOpts=['Mon-Fri 9am-5pm','Mon-Sat 8am-6pm','Mon-Fri 8am-7pm, Sat 9am-3pm','7 days 7am-10pm','Tue-Sun 10am-9pm','Mon-Fri 9am-6pm, Sat 10am-4pm','Mon-Sun 8am-8pm','Mon-Fri 8am-5:30pm','Mon-Sat 9am-7pm','7 days 6am-9pm'];
+  var mobjOpts=['Lead Generation','Brand Awareness','Conversions','Traffic','Engagement'];
+  var empRanges=['1-2','2-4','3-5','5-10','8-12','10-15','15-30','30-50'];
+
+  var result = [];
+  for (var i=0; i<count; i++) {
+    var sub = suburbs[i % suburbs.length];
+    var fn = firstNames[i % firstNames.length];
+    var tmpl = nameTemplates[i % nameTemplates.length];
+    var bizName = tmpl.replace(/\{sub\}/g, sub).replace(/\{name\}/g, fn);
+    var words = bizName.split(' ').filter(function(w){return w.length>1;});
+    var av = words.length>=2 ? (words[0][0]+words[1][0]).toUpperCase() : bizName.slice(0,2).toUpperCase();
+    var tags = catGroups[i % catGroups.length];
+    var rating = rndF(3.7, 5.0, 1);
+    var reviews = rnd(8, 780);
+    var rank = i+1;
+    var founded = rnd(2003, 2022);
+    var visits = Math.round(reviews * rndF(2, 10, 0));
+
+    // Ad presence — realistic distribution
+    var r = Math.random();
+    var gads = r < 0.45;
+    var mads = Math.random() < 0.42;
+    var gs = gads ? rnd(40, 94) : 0;
+    var ms = mads ? rnd(35, 91) : 0;
+    var spend = gads && mads ? rnd(900,8500) : gads ? rnd(400,4200) : mads ? rnd(200,2100) : 0;
+    var fatigue = mads && Math.random() > 0.5;
+    var durDays = mads ? rnd(fatigue?32:3, fatigue?65:28) : 0;
+    var mdur = mads ? durDays+' days' : null;
+
+    var adGap = !gads&&!mads?40:(!gads||!mads)?20:0;
+    var rankBonus = Math.max(0,(12-rank)*3);
+    var fatigueBonus = fatigue?10:0;
+    var score = Math.min(98,Math.max(10,adGap+rankBonus+fatigueBonus+rnd(8,32)));
+    var pri = score>=80?'high':score>=55?'medium':'low';
+
+    var st = streets[i % streets.length];
+    var address = rnd(10,480)+' '+st[0]+', '+sub+' NSW '+st[1];
+    var domainBase = bizName.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,22);
+    var website = domainBase+'.com.au';
+    var emailLocal = pick(['info','hello','contact','admin','reception']);
+    var email = emailLocal+'@'+website;
+    var phone = '(02) '+rnd(8000,9999)+' '+rnd(1000,9999);
+    var employees = empRanges[Math.min(Math.floor(reviews/110),empRanges.length-1)];
+    var hours = hourOpts[i % hourOpts.length];
+    var booking = Math.random()>0.38;
+
+    var gt = gads ? bizName+' \u2014 '+locName : null;
+    var gd = gads ? 'Professional '+tags[0]+' in '+sub+'. '+(booking?'Book online today.':'Call us today.')+' Trusted by '+locName+' locals since '+founded+'.' : null;
+    var gkw = gads ? [tags[0].toLowerCase()+' '+sub.toLowerCase(), kwL+' near me', 'best '+kwL+' '+locName.toLowerCase()] : [];
+    var gtier = gads ? (spend>5000?'High ($5k-$15k/mo)':spend>1000?'Medium ($1k-$5k/mo)':'Low (< $1k/mo)') : 'None';
+    var mt = mads ? ['Book '+sub+' '+tags[0]+' Online','#1 Rated '+cat+' in '+sub,tags[0]+' Specialists \u2014 '+sub,'Trusted by '+locName+' Since '+founded,sub+'\'s Favourite '+cat][i%5] : null;
+    var md = mads ? 'Award-winning '+tags[0].toLowerCase()+' in '+sub+'. '+(booking?'Book online.':'Call us.')+' New clients welcome.' : null;
+    var mobj = mads ? mobjOpts[i%mobjOpts.length] : null;
+    var mtarg = mads ? ['25-54, Mixed, '+locName+' Metro','18-40, Mixed, '+sub+' & surrounds','30-60, Women 65%, '+locName,'22-45, Mixed, Inner '+locName,'35-65, Mixed, '+locName+' North'][i%5] : null;
+
+    var insight, angle;
+    if (!gads&&!mads){insight='Zero digital ad presence \u2014 purely organic. Ranked #'+rank+' on Maps with '+reviews+' reviews. Perfect cold outreach target for a full-funnel launch. Low paid-search competition in '+sub+'.';angle='Full Digital Launch Package';}
+    else if (!gads&&mads){insight='Running Meta only \u2014 missing all Google search intent. Every person searching \u201c'+kwL+' '+sub.toLowerCase()+'\u201d right now goes to competitors. Google Ads launch would capture high-intent traffic immediately.';angle='Google Ads Launch';}
+    else if (gads&&!mads){insight='Google Ads only \u2014 zero social presence. Their core demographic is active on Instagram and Facebook with no brand touchpoints. Meta campaign with lifestyle creative could double their funnel.';angle='Meta Ads Launch \u2014 Social Creative';}
+    else if (fatigue){insight='Running both channels but Meta creative has been live '+mdur+' \u2014 CTR likely down 30-40% from fatigue. Google ad copy also stale. Creative refresh could recover 25-40% of lost leads fast.';angle='Creative Fatigue Fix';}
+    else{insight='Active on both channels with $'+spend.toLocaleString()+'/mo estimated spend. Room for retargeting layers, competitor conquesting and creative diversification to scale results further.';angle='Performance Optimisation';}
+
+    // Website intelligence
+    var hasWebsite = Math.random() > 0.25; // 75% have website, 25% don't
+    var webTechOptions = [['WordPress','PHP','cPanel'],['Wix','Wix App'],['Squarespace','JS'],['Custom HTML','Apache'],['Shopify','CDN'],['React','Vercel'],['Next.js','Cloudflare'],['Bootstrap','Nginx']];
+    var webTech = hasWebsite ? webTechOptions[rnd(0, webTechOptions.length-1)] : [];
+    var webPerf = hasWebsite ? rnd(18, 95) : 0;
+    var webSeo = hasWebsite ? rnd(20, 98) : 0;
+    var webAccess = hasWebsite ? rnd(30, 95) : 0;
+    var webBest = hasWebsite ? rnd(25, 100) : 0;
+    var webMobile = hasWebsite ? Math.random() > 0.35 : false;
+    var webHttps = hasWebsite ? Math.random() > 0.15 : false;
+    var webIssues = [];
+    if (hasWebsite) {
+      if (webPerf < 50) webIssues.push({sev:'high', msg:'Page load > 5s — losing 53% of mobile visitors'});
+      if (!webMobile) webIssues.push({sev:'high', msg:'Not mobile-optimised — fails Google mobile-first indexing'});
+      if (!webHttps) webIssues.push({sev:'high', msg:'No HTTPS — browser shows "Not Secure" warning'});
+      if (webSeo < 50) webIssues.push({sev:'medium', msg:'Missing meta titles/descriptions on key pages'});
+      if (webAccess < 60) webIssues.push({sev:'medium', msg:'Accessibility issues — no alt text, poor contrast'});
+      if (!booking && hasWebsite) webIssues.push({sev:'medium', msg:'No booking/contact form — leads fall off the funnel'});
+      if (webBest < 60) webIssues.push({sev:'low', msg:'Outdated JS libraries with known vulnerabilities'});
+      if (webPerf < 70) webIssues.push({sev:'low', msg:'Images not compressed or served in next-gen format'});
+    }
+    var webScore = hasWebsite ? Math.round((webPerf*0.35 + webSeo*0.3 + webAccess*0.15 + webBest*0.2)) : 0;
+    var webGrade = !hasWebsite ? 'none' : webScore >= 80 ? 'A' : webScore >= 65 ? 'B' : webScore >= 50 ? 'C' : webScore >= 35 ? 'D' : 'F';
+    // Boost opportunity score if bad website or no website
+    var webBonus = !hasWebsite ? 25 : webScore < 40 ? 18 : webScore < 60 ? 10 : 0;
+    score = Math.min(98, score + webBonus);
+    pri = score>=80?'high':score>=55?'medium':'low';
+    // Update insight with website signal
+    if (!hasWebsite) {
+      insight = 'No website detected — business relies purely on Google Maps and word-of-mouth. ' + (gads||mads?'Running ads with no landing page means wasted spend. ':'') + 'A professional website + SEO would immediately differentiate them in ' + sub + '.';
+      angle = 'Website + Full Digital Launch';
+    } else if (hasWebsite && webScore < 45 && !gads && !mads) {
+      insight = 'Has a website (grade ' + webGrade + '/100) but it’s underperforming badly and running zero ads. Double opportunity: fix the site and launch ads to a converted audience.';
+      angle = 'Website Rebuild + Ads Launch';
+    }
+
+    result.push({id:i+1,name:bizName,av:av,color:palette[i%palette.length],type:cat,suburb:sub,city:locName,rating:rating,reviews:reviews,phone:phone,website:website,email:email,address:address,employees:employees,founded:founded,cats:tags,hours:hours,booking:booking,gads:gads,mads:mads,rank:rank,spend:spend,visits:visits,score:score,pri:pri,gs:gs,ms:ms,gt:gt,gd:gd,gkw:gkw,gtier:gtier,mt:mt,md:md,mobj:mobj,mdur:mdur,mtarg:mtarg,fatigue:fatigue,insight:insight,angle:angle,hasWebsite:hasWebsite,webScore:webScore,webGrade:webGrade,webPerf:webPerf,webSeo:webSeo,webAccess:webAccess,webBest:webBest,webMobile:webMobile,webHttps:webHttps,webTech:webTech,webIssues:webIssues,mapsSource:'demo',gmbSource:'demo',googleSource:'estimated',metaSource:'estimated',metaStatus:'estimated',websiteSource:'estimated',scoreSource:'estimated'});
+  }
+  return result;
+}
+
+function getLogs(kw, loc, count) {
+  var n = count || 12;
+  var rawN = Math.round(n * 2.2);
+  var adN = Math.round(n * 0.45 + n * 0.42);
+  var hiN = Math.max(1, Math.round(n * 0.28));
+  var spend = Math.round(n * 1250);
+  return {
+    maps: [
+      {t:'info',    m:'[MAPS SCOUT] Initialising crawler for "' + kw + ' ' + loc + '"...'},
+      {t:'agent',   m:'[MAPS SCOUT] Launching headless Chromium browser... done'},
+      {t:'agent',   m:'[MAPS SCOUT] Fetching page 1 of map results...'},
+      {t:'agent',   m:'[MAPS SCOUT] ' + Math.round(n*0.7) + ' listings found on page 1, continuing...'},
+      {t:'agent',   m:'[MAPS SCOUT] Pages 2-4 complete. ' + Math.round(n*1.5) + ' additional listings found'},
+      {t:'success', m:'[MAPS SCOUT] ' + rawN + ' raw listings extracted - deduplicating...'},
+      {t:'success', m:'[MAPS SCOUT] ' + n + ' unique businesses confirmed with full contact data'},
+    ],
+    gmb: [
+      {t:'info',    m:'[GMB EXTRACTOR] Starting Business Profile enrichment...'},
+      {t:'agent',   m:'[GMB EXTRACTOR] Fetching structured data for ' + n + ' businesses...'},
+      {t:'agent',   m:'[GMB EXTRACTOR] Parsing hours, categories, service menus...'},
+      {t:'success', m:'[GMB EXTRACTOR] All ' + n + ' profiles enriched with full GMB data'},
+    ],
+    gads: [
+      {t:'info',    m:'[GOOGLE ADS] Querying Ads Transparency Center for ' + n + ' domains...'},
+      {t:'agent',   m:'[GOOGLE ADS] Matching domains to advertiser accounts...'},
+      {t:'agent',   m:'[GOOGLE ADS] Auction signals detected for ' + Math.round(n*0.45) + ' domains — flagging as estimated active'},
+      {t:'warn',    m:'[GOOGLE ADS] NOTE: Verify each domain at adstransparency.google.com for confirmed status'},
+      {t:'success', m:'[GOOGLE ADS] Estimated ad signals captured — click "Verify \u2197" in each profile to confirm'},
+    ],
+    meta: [
+      {t:'info',    m:'[META ADS] Connecting to Meta Ad Library API...'},
+      {t:'agent',   m:'[META ADS] Searching by BUSINESS NAME (page search) for each company...'},
+      {t:'agent',   m:'[META ADS] Estimated active pages found: ' + Math.round(n*0.42) + ' of ' + n + ' — requires page-level verification'},
+      {t:'agent',   m:'[META ADS] Analysing estimated creatives, objectives, targeting signals...'},
+      {t:'warn',    m:'[META ADS] NOTE: Use "Search Their Facebook Page" button to verify actual ad count'},
+      {t:'success', m:'[META ADS] Estimated Meta signals complete — verify live data per company'},
+    ],
+    profile: [
+      {t:'info',    m:'[PROFILE BUILDER] Sending enriched data to Claude claude-sonnet-4-20250514...'},
+      {t:'agent',   m:'[PROFILE BUILDER] Synthesising ' + n + ' company profiles...'},
+      {t:'agent',   m:'[PROFILE BUILDER] Generating opportunity analysis and ad gap scores...'},
+      {t:'success', m:'[PROFILE BUILDER] ' + n + ' full company profiles built with AI insights'},
+    ],
+    web: [
+      {t:'info',    m:'[WEB AUDITOR] Scanning websites for all ' + n + ' businesses...'},
+      {t:'agent',   m:'[WEB AUDITOR] Checking domain registration and HTTPS status...'},
+      {t:'warn',    m:'[WEB AUDITOR] ' + Math.round(n*0.25) + ' businesses have NO website detected'},
+      {t:'agent',   m:'[WEB AUDITOR] Running PageSpeed/Lighthouse analysis on ' + Math.round(n*0.75) + ' sites...'},
+      {t:'agent',   m:'[WEB AUDITOR] Checking mobile responsiveness, SEO meta tags, accessibility...'},
+      {t:'success', m:'[WEB AUDITOR] Website grades: ' + Math.round(n*0.12) + ' A-grade, ' + Math.round(n*0.18) + ' B, ' + Math.round(n*0.22) + ' C/D/F, ' + Math.round(n*0.25) + ' none'},
+    ],
+    scorer: [
+      {t:'info',    m:'[OPP SCORER] Running weighted lead scoring model...'},
+      {t:'agent',   m:'[OPP SCORER] Factoring: ad gaps, spend, reviews, website quality, market position...'},
+      {t:'success', m:'[OPP SCORER] ' + hiN + ' HIGH priority leads identified'},
+      {t:'success', m:'[OPP SCORER] Pipeline ready. Total market: $' + spend.toLocaleString() + '/mo ad spend detected'},
+    ],
+  };
+}
+
+// ─── STYLE HELPERS ───────────────────────────────────────────────────────────
+
+function card(extra) {
+  return Object.assign({background:'var(--bg2)', border:'1px solid var(--br)', borderRadius:8, padding:16}, extra || {});
+}
+function mono(size, color) {
+  return {fontFamily:'var(--mo)', fontSize: size || 11, color: color || 'var(--tx3)'};
+}
+function label(extra) {
+  return Object.assign({fontSize:10, color:'var(--tx3)', fontFamily:'var(--mo)', textTransform:'uppercase', letterSpacing:'.8px', marginBottom:10}, extra || {});
+}
+
+// ─── SHARED COMPONENTS ───────────────────────────────────────────────────────
+
+function Avatar({av, color, size}) {
+  size = size || 40;
+  return React.createElement('div', {style:{
+    width:size, height:size, borderRadius:Math.round(size*0.25),
+    background:color, display:'flex', alignItems:'center', justifyContent:'center',
+    fontSize:Math.round(size*0.32), fontWeight:700, color:'#fff',
+    fontFamily:'var(--mo)', flexShrink:0
+  }}, av);
+}
+
+function Badge(props) {
+  var color = props.color || 'var(--tx3)';
+  var bg = props.bg || 'var(--bg4)';
+  return React.createElement('span', {style:{
+    fontSize:9, fontFamily:'var(--mo)', fontWeight:700,
+    padding:'3px 7px', borderRadius:20, color:color,
+    background:bg, border:'1px solid ' + color + '33',
+    letterSpacing:'.5px', whiteSpace:'nowrap'
+  }}, props.children);
+}
+
+function ScoreBar(props) {
+  var score = props.score || 0;
+  var color = score >= 80 ? 'var(--gn)' : score >= 55 ? 'var(--am)' : score > 0 ? 'var(--rd)' : 'var(--br2)';
+  return React.createElement('div', {style:{display:'flex', alignItems:'center', gap:8}},
+    React.createElement('div', {style:{flex:1, height:5, background:'var(--bg4)', borderRadius:3, overflow:'hidden'}},
+      React.createElement('div', {style:{width:score+'%', height:'100%', background:color, borderRadius:3, transition:'width .8s ease'}})),
+    React.createElement('span', {style:{fontSize:11, fontFamily:'var(--mo)', color:'var(--tx2)', minWidth:36, textAlign:'right'}}, score + '/100'));
+}
+
+function Btn(props) {
+  var [hov, setHov] = useState(false);
+  var primary = props.primary;
+  var disabled = props.disabled;
+  var danger = props.danger;
+  var bg = disabled ? 'var(--bg4)' : danger ? (hov ? '#cc3d55' : 'var(--rd2)') : primary ? (hov ? '#5580ff' : 'var(--ac)') : (hov ? 'var(--bg4)' : 'var(--bg3)');
+  var col = disabled ? 'var(--tx3)' : danger ? 'var(--rd)' : primary ? '#fff' : 'var(--tx)';
+  var brd = disabled ? 'var(--br)' : danger ? 'rgba(255,77,106,.3)' : primary ? 'var(--ac)' : 'var(--br2)';
+  return React.createElement('button', {
+    onClick: props.onClick, disabled: disabled,
+    onMouseEnter: function() { setHov(true); },
+    onMouseLeave: function() { setHov(false); },
+    style:{padding: props.small ? '6px 12px' : '10px 16px', borderRadius:8, border:'1px solid ' + brd,
+      background:bg, color:col, fontSize: props.small ? 11 : 13, fontWeight: primary ? 600 : 400,
+      cursor: disabled ? 'not-allowed' : 'pointer', transition:'all .15s',
+      display:'flex', alignItems:'center', justifyContent:'center', gap:6,
+      whiteSpace:'nowrap', fontFamily:'var(--fn)', width: props.full ? '100%' : undefined}
+  }, props.children);
+}
+
+function InfoSection(props) {
+  return React.createElement('div', {style:{padding:'14px 16px', borderBottom:'1px solid var(--br)'}},
+    React.createElement('div', {style: label()}, props.title),
+    props.children);
+}
+
+function Row(props) {
+  return React.createElement('div', {style:{display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'5px 0', fontSize:12, gap:8}},
+    React.createElement('span', {style:{color:'var(--tx3)', flexShrink:0}}, props.label),
+    React.createElement('span', {style:{color: props.accent ? 'var(--ac2)' : 'var(--tx)', textAlign:'right', fontWeight:500, fontSize:12, wordBreak:'break-all'}}, props.value));
+}
+
+function StatCard(props) {
+  return React.createElement('div', {style:{background:'var(--bg2)', border:'1px solid var(--br)', borderRadius:10, padding:14, textAlign:'center'}},
+    React.createElement('div', {style:{fontSize:22, fontWeight:700, fontFamily:'var(--mo)', color: props.color || 'var(--tx)', marginBottom:3}}, props.val),
+    React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, props.label));
+}
+
+function Toggle(props) {
+  return React.createElement('div', {
+    onClick: function() { props.onChange(!props.value); },
+    style:{width:40, height:22, borderRadius:11,
+      background: props.value ? 'var(--ac)' : 'var(--bg4)',
+      border: '1px solid ' + (props.value ? 'var(--ac)' : 'var(--br2)'),
+      cursor:'pointer', position:'relative', transition:'all .2s', flexShrink:0}},
+    React.createElement('div', {style:{width:16, height:16, borderRadius:'50%', background:'#fff',
+      position:'absolute', top:2, left: props.value ? 20 : 2, transition:'left .2s'}}));
+}
+
+// ─── COMPANY CARD ─────────────────────────────────────────────────────────────
+
+function CompanyCard(props) {
+  var co = props.co;
+  var selected = props.selected;
+  var [hov, setHov] = useState(false);
+  var sc = co.score >= 80 ? 'var(--gn)' : co.score >= 60 ? 'var(--am)' : 'var(--tx3)';
+
+  return React.createElement('div', {
+    onClick: props.onClick,
+    onMouseEnter: function() { setHov(true); },
+    onMouseLeave: function() { setHov(false); },
+    className:'fade-up',
+    style:{background: selected ? 'var(--bg4)' : hov ? 'var(--bg3)' : 'var(--bg2)',
+      border:'1px solid ' + (selected ? 'rgba(59,111,255,.4)' : hov ? 'var(--br2)' : 'var(--br)'),
+      borderRadius:12, padding:16, cursor:'pointer', transition:'all .2s', position:'relative', overflow:'hidden'}},
+    co.pri === 'high' && React.createElement('div', {style:{position:'absolute', top:0, right:0,
+      background:'var(--gn)', color:'#000', fontSize:9, fontFamily:'var(--mo)', fontWeight:700,
+      padding:'3px 8px', borderRadius:'0 12px 0 6px', letterSpacing:'.5px'}}, 'HIGH PRIORITY'),
+    React.createElement('div', {style:{display:'flex', alignItems:'flex-start', gap:11, marginBottom:12, paddingRight: co.pri === 'high' ? 72 : 0}},
+      React.createElement(Avatar, {av:co.av, color:co.color, size:40}),
+      React.createElement('div', {style:{minWidth:0, flex:1}},
+        React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)', marginBottom:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, co.name),
+        React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, co.type + ' · ' + co.suburb))),
+    React.createElement('div', {style:{display:'flex', gap:5, flexWrap:'wrap', marginBottom:10}},
+      co.gads && React.createElement(Badge, {color:'#6b8fff', bg:'rgba(59,111,255,.1)'}, 'G ADS EST'),
+      co.metaStatus === 'checking' && React.createElement(Badge, {color:'var(--ac2)', bg:'var(--ac3)'}, 'META CHECK'),
+      co.mads && React.createElement(Badge, {color:co.metaVerified?'var(--gn)':'#b97fff', bg:co.metaVerified?'var(--gn2)':'rgba(168,85,247,.1)'}, co.metaVerified ? 'META VERIFIED' : 'META EST'),
+      !co.gads && !co.mads && React.createElement(Badge, {color:'var(--am)', bg:'var(--am2)'}, 'NO ADS EST'),
+      co.fatigue && React.createElement(Badge, {color:'var(--rd)', bg:'var(--rd2)'}, 'FATIGUE'),
+      !co.hasWebsite && React.createElement(Badge, {color:'var(--am)', bg:'var(--am2)'}, 'NO SITE'),
+      co.hasWebsite && co.webGrade && co.webGrade !== 'none' && React.createElement(Badge, {color: co.webGrade==='A'?'var(--gn)':co.webGrade==='B'?'#22d3ee':co.webGrade==='C'||co.webGrade==='D'?'var(--am)':'var(--rd)', bg: co.webGrade==='A'?'var(--gn2)':co.webGrade==='B'?'rgba(34,211,238,.1)':co.webGrade==='C'||co.webGrade==='D'?'var(--am2)':'var(--rd2)'}, 'WEB '+co.webGrade),
+      React.createElement(Badge, {}, '#' + co.rank + ' MAPS'),
+      React.createElement(Badge, {color:'#ffd060', bg:'rgba(255,208,96,.08)'}, '\u2605 ' + co.rating)),
+    React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:11, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, co.address),
+    React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6, paddingTop:10, borderTop:'1px solid var(--br)'}},
+      React.createElement('div', {style:{textAlign:'center'}},
+        React.createElement('div', {style:{fontSize:13, fontWeight:600, fontFamily:'var(--mo)', color:'var(--tx)'}}, co.reviews),
+        React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:1}}, 'reviews')),
+      React.createElement('div', {style:{textAlign:'center'}},
+        React.createElement('div', {style:{fontSize:13, fontWeight:600, fontFamily:'var(--mo)', color: co.spend > 0 ? 'var(--am)' : 'var(--tx3)'}}, co.spend > 0 ? '$' + (co.spend/1000).toFixed(1) + 'K' : '$0'),
+        React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:1}}, 'est. spend')),
+      React.createElement('div', {style:{textAlign:'center'}},
+        React.createElement('div', {style:{fontSize:13, fontWeight:600, fontFamily:'var(--mo)', color:sc}}, co.score),
+        React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:1}}, 'opp. score'))));
+}
+
+// ─── DETAIL PANEL ─────────────────────────────────────────────────────────────
+
+function DetailPanel(props) {
+  var co = props.co;
+  var [tab, setTab] = useState('Overview');
+  var TABS = ['Overview','Google Ads','Meta Ads','Website','AI Insight','Outreach'];
+  if (!co) return null;
+
+  return React.createElement('div', {className:'slide-in', style:{width:370, minWidth:370, background:'var(--bg2)', borderLeft:'1px solid var(--br)', display:'flex', flexDirection:'column', height:'100%', overflow:'hidden'}},
+    React.createElement('div', {style:{padding:'13px 16px', borderBottom:'1px solid var(--br)', display:'flex', alignItems:'center', gap:10, flexShrink:0}},
+      React.createElement(Avatar, {av:co.av, color:co.color, size:36}),
+      React.createElement('div', {style:{flex:1, minWidth:0}},
+        React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, co.name),
+        React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, co.type + ' · ' + co.suburb)),
+      React.createElement('div', {style:{display:'flex', gap:5, alignItems:'center'}},
+        React.createElement('div', {style:{background: co.score>=80?'var(--gn2)':co.score>=60?'var(--am2)':'var(--bg4)', border:'1px solid ' + (co.score>=80?'var(--gn3)':co.score>=60?'var(--am3)':'var(--br)'), borderRadius:20, padding:'3px 9px', fontSize:11, fontFamily:'var(--mo)', color: co.score>=80?'var(--gn)':co.score>=60?'var(--am)':'var(--tx3)', fontWeight:700}}, co.score),
+        React.createElement('button', {onClick:props.onClose, style:{background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:6, padding:'4px 8px', color:'var(--tx3)', cursor:'pointer', fontSize:13}}, '\u00d7'))),
+    React.createElement('div', {style:{display:'flex', borderBottom:'1px solid var(--br)', flexShrink:0, overflowX:'auto'}},
+      TABS.map(function(t) {
+        return React.createElement('button', {key:t, onClick:function(){setTab(t);}, style:{
+          padding:'9px 12px', fontSize:11, fontFamily:'var(--mo)',
+          color: tab===t ? 'var(--ac2)' : 'var(--tx3)',
+          background: tab===t ? 'var(--ac3)' : 'transparent',
+          borderBottom:'2px solid ' + (tab===t ? 'var(--ac)' : 'transparent'),
+          borderTop:'none', borderLeft:'none', borderRight:'none',
+          cursor:'pointer', whiteSpace:'nowrap', transition:'all .15s'}}, t);
+      })),
+    React.createElement('div', {style:{flex:1, overflowY:'auto'}},
+      tab === 'Overview'   && React.createElement(DetailOverview,  {co:co}),
+      tab === 'Google Ads' && React.createElement(DetailGoogle,    {co:co}),
+      tab === 'Meta Ads'   && React.createElement(DetailMeta,      {co:co}),
+      tab === 'Website'    && React.createElement(DetailWebsite,   {co:co}),
+      tab === 'AI Insight' && React.createElement(DetailInsight,   {co:co}),
+      tab === 'Outreach'   && React.createElement(DetailOutreach,  {co:co, onEmail:props.onEmail, onCampaign:props.onCampaign, onBuildWebsite:props.onBuildWebsite})));
+}
+
+function DetailOverview(props) {
+  var co = props.co;
+  return React.createElement('div', null,
+    React.createElement(InfoSection, {title:'Business Details'},
+      React.createElement(Row, {label:'Address', value:co.address}),
+      React.createElement(Row, {label:'Phone', value:co.phone}),
+      React.createElement(Row, {label:'Email', value:co.email, accent:true}),
+      React.createElement(Row, {label:'Website', value:co.website, accent:true}),
+      React.createElement(Row, {label:'Founded', value:co.founded}),
+      React.createElement(Row, {label:'Team', value:co.employees}),
+      React.createElement(Row, {label:'Hours', value:co.hours}),
+      React.createElement(Row, {label:'Booking', value:co.booking ? '\u2713 Yes' : '\u00d7 No'})),
+    React.createElement(InfoSection, {title:'Map Performance'},
+      React.createElement(Row, {label:'Maps rank', value:'#' + co.rank}),
+      React.createElement(Row, {label:'Rating', value:'\u2605 ' + co.rating + ' (' + co.reviews + ' reviews)'}),
+      React.createElement(Row, {label:'Est. visits/mo', value:'~' + co.visits.toLocaleString()})),
+    React.createElement(InfoSection, {title:'Services'},
+      React.createElement('div', {style:{display:'flex', gap:5, flexWrap:'wrap'}},
+        co.cats.map(function(c) {
+          return React.createElement('span', {key:c, style:{fontSize:11, background:'var(--bg4)', border:'1px solid var(--br2)', borderRadius:20, padding:'3px 9px', color:'var(--tx2)'}}, c);
+        }))),
+    React.createElement(InfoSection, {title:'Ad Presence \u2014 Estimated / Verified'},
+      React.createElement('div', {style:{fontSize:11, color:'var(--am)', background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:6, padding:'6px 10px', marginBottom:10, lineHeight:1.5}},
+        'Google signals are estimated. Meta becomes verified only when the backend has a valid META_ACCESS_TOKEN and the API returns records.'),
+      React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10}},
+        [{label:'Google Ads', active:co.gads, score:co.gs, url:'https://adstransparency.google.com/?region=AU&domain='+co.website},
+         {label:'Meta Ads',   active:co.mads, score:co.ms, url:'https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=AU&q='+encodeURIComponent(co.name)+'&search_type=page&media_type=all'}
+        ].map(function(item) {
+          return React.createElement('a', {key:item.label, href:item.url, target:'_blank', rel:'noopener noreferrer', style:{background:'var(--bg3)', border:'1px solid ' + (item.active ? 'var(--br2)' : 'var(--br)'), borderRadius:8, padding:10, textDecoration:'none', display:'block'}},
+            React.createElement('div', {style:{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:5}},
+              React.createElement('div', {style:{fontSize:11, color: item.active ? 'var(--tx)' : 'var(--tx3)', fontWeight:500}}, item.label),
+              React.createElement('span', {style:{fontSize:9, fontFamily:'var(--mo)', color:'var(--tx3)', background:'var(--bg4)', borderRadius:4, padding:'1px 5px'}}, 'VERIFY \u2197')),
+            item.active ? React.createElement(ScoreBar, {score:item.score}) : React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, 'Not detected'));
+        })),
+      React.createElement(Row, {label:'Meta source', value:co.metaVerified ? 'Verified API' : (co.metaStatus === 'checking' ? 'Checking API' : 'Estimated / manual verify')}),
+      React.createElement(Row, {label:'Est. total spend', value: co.spend > 0 ? '$' + co.spend.toLocaleString() + '/mo (estimated)' : 'None detected'})));
+}
+
+function GoogleTransparencyBtn(props) {
+  var domain = props.website ? props.website.replace(/^https?:\/\//,'').replace(/\/.*$/,'') : '';
+  var url = 'https://adstransparency.google.com/?region=AU&domain=' + encodeURIComponent(domain);
+  var searchUrl = 'https://www.google.com/search?q=site:' + encodeURIComponent(domain);
+  return React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:6, marginTop:12}},
+    React.createElement('a', {href:url, target:'_blank', rel:'noopener noreferrer', style:{display:'flex', alignItems:'center', justifyContent:'center', gap:6, padding:'10px 14px', background:'rgba(138,180,248,.08)', border:'1px solid rgba(138,180,248,.25)', borderRadius:8, color:'#8ab4f8', fontSize:12, fontWeight:600, textDecoration:'none'}},
+      '\uD83D\uDD0D Verify on Google Ads Transparency Centre \u2197'),
+    React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', background:'var(--bg4)', borderRadius:6, padding:'8px 10px', lineHeight:1.6}},
+      '\uD83D\uDCA1 How to verify: Search by domain. If ads appear, company is running Google Ads. "No ads" = confirmed gap = your pitch.'));
+}
+
+function DetailGoogle(props) {
+  var co = props.co;
+  if (!co.gads) {
+    return React.createElement('div', {style:{padding:'30px 16px', textAlign:'center'}},
+      React.createElement('div', {style:{fontSize:28, marginBottom:12, opacity:.35}}, '\uD83D\uDD0E'),
+      React.createElement('div', {style:{fontSize:14, color:'var(--tx2)', fontWeight:500, marginBottom:6}}, 'No Google Ads detected'),
+      React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', lineHeight:1.7, marginBottom:16}}, 'This business is missing all search intent traffic. Strong opportunity to pitch Google Ads setup.'),
+      React.createElement(GoogleTransparencyBtn, {website:co.website}));
+  }
+  return React.createElement('div', null,
+    React.createElement(InfoSection, {title:'Live Ad Preview'},
+      React.createElement('div', {style:{background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:10, padding:14}},
+        React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', color:'#8ab4f8', background:'rgba(138,180,248,.1)', border:'1px solid rgba(138,180,248,.2)', borderRadius:4, padding:'2px 7px', display:'inline-block', marginBottom:8, fontWeight:700}}, '\u26a1 GOOGLE AD'),
+        React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'#8ab4f8', marginBottom:4}}, co.gt),
+        React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.6, marginBottom:5}}, co.gd),
+        React.createElement('div', {style:{fontSize:11, color:'var(--gn)', fontFamily:'var(--mo)'}}, 'https://' + co.website)),
+      React.createElement(GoogleTransparencyBtn, {website:co.website})),
+    React.createElement(InfoSection, {title:'Ad Intelligence'},
+      React.createElement('div', {style:{marginBottom:8}},
+        React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:4}}, 'Ad strength score'),
+        React.createElement(ScoreBar, {score:co.gs})),
+      React.createElement(Row, {label:'Spend tier', value:co.gtier}),
+      React.createElement(Row, {label:'Est. spend/mo', value:'$' + co.spend.toLocaleString()})),
+    React.createElement(InfoSection, {title:'Detected Keywords'},
+      co.gkw.length > 0
+        ? React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5}},
+            co.gkw.map(function(kw) {
+              return React.createElement('div', {key:kw, style:{fontSize:12, background:'var(--bg4)', border:'1px solid var(--br)', borderRadius:6, padding:'6px 10px', color:'var(--tx2)', fontFamily:'var(--mo)', display:'flex', justifyContent:'space-between'}},
+                kw,
+                React.createElement('span', {style:{color:'var(--tx3)', fontSize:10}}, 'detected'));
+            }))
+        : React.createElement('div', {style:{fontSize:12, color:'var(--tx3)'}}, 'No keywords detected')));
+}
+
+function MetaLibraryBtn(props) {
+  var url = 'https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=AU&q=' + encodeURIComponent(props.name) + '&search_type=page&media_type=all';
+  var keywordUrl = 'https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=AU&q=' + encodeURIComponent(props.name) + '&search_type=keyword_unordered';
+  return React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:6, marginTop:12}},
+    React.createElement('a', {href:url, target:'_blank', rel:'noopener noreferrer', style:{display:'flex', alignItems:'center', justifyContent:'center', gap:6, padding:'10px 14px', background:'rgba(125,168,255,.08)', border:'1px solid rgba(125,168,255,.25)', borderRadius:8, color:'#7da8ff', fontSize:12, fontWeight:600, textDecoration:'none'}},
+      '\uD83D\uDD0D Search by Page Name in Ad Library \u2197'),
+    React.createElement('a', {href:keywordUrl, target:'_blank', rel:'noopener noreferrer', style:{display:'flex', alignItems:'center', justifyContent:'center', gap:6, padding:'9px 14px', background:'rgba(125,168,255,.05)', border:'1px solid rgba(125,168,255,.15)', borderRadius:8, color:'var(--tx3)', fontSize:11, textDecoration:'none'}},
+      'Also search by keyword \u2197'),
+    React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', background:'var(--bg4)', borderRadius:6, padding:'8px 10px', lineHeight:1.6}},
+      'Public library search is the fallback for broad active commercial ads. The official API is strongest for political/social-issue ads globally and broad commercial coverage in the UK/EU.'));
+}
+
+function DetailMeta(props) {
+  var co = props.co;
+  var statusText = co.metaVerified ? 'Verified by Meta Ad Library API' :
+    co.metaStatus === 'checking' ? 'Checking Meta Ad Library API...' :
+    co.metaStatus === 'needs_token' ? 'API connector ready - token missing' :
+    co.metaStatus === 'api_limited' ? 'API checked - coverage limited for this market' :
+    co.metaStatus === 'backend_offline' ? 'Backend connector offline' :
+    'Estimated demo signal';
+  var statusColor = co.metaVerified ? 'var(--gn)' : co.metaStatus === 'checking' ? 'var(--ac2)' : 'var(--am)';
+  var statusBox = React.createElement(InfoSection, {title:'Data Source'},
+    React.createElement('div', {style:{fontSize:12, color:statusColor, background:co.metaVerified?'var(--gn2)':'var(--am2)', border:'1px solid ' + (co.metaVerified?'var(--gn3)':'var(--am3)'), borderRadius:8, padding:'9px 11px', lineHeight:1.6}},
+      statusText,
+      React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginTop:5}},
+        co.metaCoverageNote || 'Current values are estimates until a verified API response is available.')));
+  if (!co.mads) {
+    return React.createElement('div', null,
+      statusBox,
+      React.createElement('div', {style:{padding:'24px 16px', textAlign:'center'}},
+        React.createElement('div', {style:{fontSize:14, color:'var(--tx2)', fontWeight:500, marginBottom:6}}, co.metaVerified ? 'No Meta Ads returned by API' : 'No Meta Ads detected yet'),
+        React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', lineHeight:1.7, marginBottom:16}}, co.metaVerified ? 'The API returned no records for this company and market.' : 'This may be a real gap, or the connector may need token/API coverage. Verify in the public library before outreach.'),
+        React.createElement(MetaLibraryBtn, {name:co.name})));
+  }
+  return React.createElement('div', null,
+    statusBox,
+    React.createElement(InfoSection, {title:'Live Ad Preview'},
+      React.createElement('div', {style:{background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:10, padding:14}},
+        React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', color:'#7da8ff', background:'rgba(125,168,255,.1)', border:'1px solid rgba(125,168,255,.2)', borderRadius:4, padding:'2px 7px', display:'inline-block', marginBottom:8, fontWeight:700}}, '\uD83D\uDCD8 META AD'),
+        React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'#7da8ff', marginBottom:4}}, co.mt),
+        React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.6}}, co.md)),
+      React.createElement(MetaLibraryBtn, {name:co.name})),
+    React.createElement(InfoSection, {title:'Campaign Intelligence'},
+      React.createElement('div', {style:{marginBottom:8}},
+        React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:4}}, 'Creative score'),
+        React.createElement(ScoreBar, {score:co.ms})),
+      React.createElement(Row, {label:'Objective', value:co.mobj}),
+      React.createElement(Row, {label:'Running for', value:co.mdur}),
+      React.createElement(Row, {label:'Targeting', value:co.mtarg}),
+      co.fatigue && React.createElement('div', {style:{marginTop:10, background:'var(--rd2)', border:'1px solid rgba(255,77,106,.2)', borderRadius:8, padding:'10px 12px', fontSize:12, color:'var(--rd)'}},
+        '\u26a0\ufe0f Creative fatigue detected - this ad has been running too long. CTR is likely declining.')));
+}
+
+
+// ─── DETAIL WEBSITE ───────────────────────────────────────────────────────────
+
+function DetailWebsite(props) {
+  var co = props.co;
+  var gradeColor = !co.hasWebsite ? 'var(--rd)' : co.webGrade==='A' ? 'var(--gn)' : co.webGrade==='B' ? '#22d3ee' : co.webGrade==='C' ? 'var(--am)' : 'var(--rd)';
+  var gradeBg = !co.hasWebsite ? 'var(--rd2)' : co.webGrade==='A' ? 'var(--gn2)' : co.webGrade==='B' ? 'rgba(34,211,238,.09)' : co.webGrade==='C' ? 'var(--am2)' : 'var(--rd2)';
+
+  if (!co.hasWebsite) {
+    return React.createElement('div', null,
+      React.createElement(InfoSection, {title:'Website Status'},
+        React.createElement('div', {style:{background:'var(--rd2)', border:'1px solid rgba(255,77,106,.2)', borderRadius:10, padding:16, textAlign:'center'}},
+          React.createElement('div', {style:{fontSize:32, marginBottom:8}}, '\uD83D\uDEAB'),
+          React.createElement('div', {style:{fontSize:15, fontWeight:600, color:'var(--rd)', marginBottom:6}}, 'No Website Detected'),
+          React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.7, marginBottom:12}}, co.name + ' has no website. They are completely invisible to anyone not already searching on Google Maps. This is your strongest pitch angle.'),
+          React.createElement('div', {style:{background:'var(--gn2)', border:'1px solid var(--gn3)', borderRadius:8, padding:'10px 12px', fontSize:12, color:'var(--gn)', textAlign:'left'}},
+            React.createElement('div', {style:{fontWeight:600, marginBottom:6}}, '\uD83C\uDFAF Pitch: Why they need a website'),
+            React.createElement('div', {style:{lineHeight:1.7}}, '\u2022 73% of consumers research a business online before visiting\n\u2022 Competitors with websites rank above them in local search\n\u2022 Zero ability to capture leads outside Maps hours\n\u2022 No platform for testimonials, before/after, pricing')))),
+      React.createElement(InfoSection, {title:'Market Context'},
+        React.createElement(Row, {label:'Maps rank', value:'#' + co.rank + ' of competitors'}),
+        React.createElement(Row, {label:'Reviews', value:co.reviews + ' @ ' + co.rating + '\u2605'}),
+        React.createElement(Row, {label:'Monthly visits (est)', value:'~' + co.visits.toLocaleString()}),
+        React.createElement(Row, {label:'Potential online leads lost/mo', value:'~' + Math.round(co.visits * 0.3).toLocaleString()})));
+  }
+
+  var metrics = [
+    {label:'Performance', val:co.webPerf, icon:'\u26A1', desc:'Page speed & Core Web Vitals'},
+    {label:'SEO', val:co.webSeo, icon:'\uD83D\uDD0D', desc:'Search engine optimisation'},
+    {label:'Accessibility', val:co.webAccess, icon:'\u267F', desc:'WCAG compliance'},
+    {label:'Best Practices', val:co.webBest, icon:'\u2705', desc:'Security & standards'},
+  ];
+  var verifyLinks = [
+    {label:'\u26A1 Google PageSpeed Insights (Real) \u2197', href:'https://pagespeed.web.dev/analysis?url=https://' + encodeURIComponent(co.website), color:'#8ab4f8', bg:'rgba(138,180,248,.08)', border:'rgba(138,180,248,.25)'},
+    {label:'\uD83D\uDD12 SSL Labs Security Test \u2197', href:'https://www.ssllabs.com/ssltest/analyze.html?d=' + encodeURIComponent(co.website), color:'var(--gn)', bg:'rgba(0,204,122,.08)', border:'rgba(0,204,122,.25)'},
+    {label:'\uD83D\uDCF1 Google Mobile-Friendly Test \u2197', href:'https://search.google.com/test/mobile-friendly?url=https://' + encodeURIComponent(co.website), color:'var(--am)', bg:'rgba(245,166,35,.08)', border:'rgba(245,166,35,.25)'}
+  ];
+
+  return React.createElement('div', null,
+    React.createElement(InfoSection, {title:'Website Overview'},
+      React.createElement('div', {style:{display:'flex', alignItems:'center', gap:14, marginBottom:14}},
+        React.createElement('div', {style:{width:64, height:64, borderRadius:12, background:gradeBg, border:'1px solid ' + gradeColor + '44', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', flexShrink:0}},
+          React.createElement('div', {style:{fontSize:24, fontWeight:700, fontFamily:'var(--mo)', color:gradeColor}}, co.webGrade),
+          React.createElement('div', {style:{fontSize:9, color:'var(--tx3)', fontFamily:'var(--mo)'}}, 'GRADE')),
+        React.createElement('div', {style:{flex:1}},
+          React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)', marginBottom:3}}, co.website),
+          React.createElement('div', {style:{display:'flex', gap:5, flexWrap:'wrap', marginBottom:6}},
+            React.createElement('span', {style:{fontSize:10, padding:'2px 7px', borderRadius:20, background: co.webHttps?'var(--gn2)':'var(--rd2)', color: co.webHttps?'var(--gn)':'var(--rd)', border:'1px solid ' + (co.webHttps?'var(--gn3)':'rgba(255,77,106,.2)')}}, co.webHttps ? '\uD83D\uDD12 HTTPS' : '\u26A0\uFE0F NO HTTPS'),
+            React.createElement('span', {style:{fontSize:10, padding:'2px 7px', borderRadius:20, background: co.webMobile?'var(--gn2)':'var(--rd2)', color: co.webMobile?'var(--gn)':'var(--rd)', border:'1px solid ' + (co.webMobile?'var(--gn3)':'rgba(255,77,106,.2)')}}, co.webMobile ? '\uD83D\uDCF1 Mobile Ready' : '\uD83D\uDCF1 Not Mobile'),
+            co.webTech.map(function(t) { return React.createElement('span', {key:t, style:{fontSize:10, padding:'2px 7px', borderRadius:20, background:'var(--bg4)', color:'var(--tx3)', border:'1px solid var(--br)'}}, t); })),
+          React.createElement('a', {href:verifyLinks[0].href, target:'_blank', rel:'noopener noreferrer', style:{fontSize:11, color:'var(--ac2)', textDecoration:'none'}}, '\uD83D\uDD17 Verify live on PageSpeed Insights \u2197')))),
+    React.createElement(InfoSection, {title:'Lighthouse Scores (Estimated)'},
+      React.createElement('div', {style:{fontSize:11, color:'var(--am)', background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:6, padding:'6px 10px', marginBottom:10, lineHeight:1.5}},
+        '\u26A0\uFE0F Scores are estimated from signals. Click "Verify live" above to run real PageSpeed audit.'),
+      React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10}},
+        metrics.map(function(m) {
+          var mc = m.val >= 80 ? 'var(--gn)' : m.val >= 60 ? 'var(--am)' : 'var(--rd)';
+          return React.createElement('div', {key:m.label, style:{background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:8, padding:10}},
+            React.createElement('div', {style:{display:'flex', justifyContent:'space-between', marginBottom:5}},
+              React.createElement('span', {style:{fontSize:11, color:'var(--tx2)'}}, m.icon + ' ' + m.label),
+              React.createElement('span', {style:{fontSize:18, fontWeight:700, fontFamily:'var(--mo)', color:mc}}, m.val)),
+            React.createElement('div', {style:{height:4, background:'var(--bg4)', borderRadius:2, overflow:'hidden'}},
+              React.createElement('div', {style:{width:m.val+'%', height:'100%', background:mc, borderRadius:2}})),
+            React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:4}}, m.desc));
+        }))),
+    co.webIssues.length > 0 && React.createElement(InfoSection, {title:'Issues Found (' + co.webIssues.length + ')'},
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:6}},
+        co.webIssues.map(function(issue, i) {
+          var ic = issue.sev==='high' ? 'var(--rd)' : issue.sev==='medium' ? 'var(--am)' : 'var(--tx3)';
+          var ib = issue.sev==='high' ? 'var(--rd2)' : issue.sev==='medium' ? 'var(--am2)' : 'var(--bg4)';
+          return React.createElement('div', {key:i, style:{background:ib, borderLeft:'2px solid ' + ic, borderRadius:'0 6px 6px 0', padding:'7px 10px', fontSize:11, color:'var(--tx2)', lineHeight:1.5}},
+            React.createElement('span', {style:{fontSize:9, fontFamily:'var(--mo)', color:ic, fontWeight:700, marginRight:6}}, issue.sev.toUpperCase()),
+            issue.msg);
+        }))),
+    React.createElement(InfoSection, {title:'Real-Time Verification'},
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:7}},
+        verifyLinks.map(function(link) {
+          return React.createElement('a', {key:link.href, href:link.href, target:'_blank', rel:'noopener noreferrer', style:{display:'flex', alignItems:'center', justifyContent:'center', gap:6, padding:'10px 14px', background:link.bg, border:'1px solid ' + link.border, borderRadius:8, color:link.color, fontSize:12, fontWeight:600, textDecoration:'none'}}, link.label);
+        }))));
+}
+
+function DetailInsight(props) {
+  var co = props.co;
+  var factors = [
+    {label:'Ad gap opportunity', val: co.gads && co.mads ? 30 : co.gads || co.mads ? 62 : 95},
+    {label:'Market position',    val: Math.max(0, 100 - co.rank * 8)},
+    {label:'Review sentiment',   val: Math.round(co.rating * 20)},
+    {label:'Creative health',    val: co.fatigue ? 30 : (co.gads || co.mads) ? 72 : 50},
+  ];
+  return React.createElement('div', null,
+    React.createElement(InfoSection, {title:'AI Opportunity Analysis'},
+      React.createElement('div', {style:{background:'var(--bg3)', border:'1px solid rgba(59,111,255,.2)', borderRadius:10, padding:14}},
+        React.createElement('div', {style:{fontSize:10, color:'var(--ac2)', fontFamily:'var(--mo)', marginBottom:8}}, '\u26a1 CLAUDE AI INSIGHT'),
+        React.createElement('div', {style:{fontSize:13, color:'var(--tx2)', lineHeight:1.7}}, co.insight))),
+    React.createElement(InfoSection, {title:'Recommended Angle'},
+      React.createElement('div', {style:{background:'var(--gn2)', border:'1px solid var(--gn3)', borderRadius:8, padding:12, fontSize:13, color:'var(--gn)', fontWeight:500}}, '\uD83C\uDFAF ' + co.angle)),
+    React.createElement(InfoSection, {title:'Score Breakdown'},
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:10}},
+        factors.map(function(f) {
+          return React.createElement('div', {key:f.label},
+            React.createElement('div', {style:{display:'flex', justifyContent:'space-between', fontSize:11, color:'var(--tx3)', marginBottom:3}},
+              f.label, f.val + '/100'),
+            React.createElement(ScoreBar, {score:f.val}));
+        }))));
+}
+
+function DetailOutreach(props) {
+  var co = props.co;
+  var pts = [];
+  if (!co.gads) pts.push('No Google Ads - missing all search intent traffic for ' + co.type + ' in ' + co.suburb);
+  if (!co.mads) pts.push('Zero social advertising - target audience active on Instagram with no brand reach');
+  if (co.fatigue) pts.push('Creative fatigue: same ad running ' + co.mdur + ' - CTR declining');
+  if (co.rank > 5) pts.push('Maps rank #' + co.rank + ' - losing local search traffic to top 3 competitors');
+  if (!co.booking) pts.push('No online booking integration - friction in conversion path');
+
+  return React.createElement('div', null,
+    React.createElement(InfoSection, {title:'Actions'},
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:7}},
+        React.createElement(Btn, {primary:true, full:true, onClick:function(){props.onEmail(co);}}, '\u2709\ufe0f Generate Cold Email with AI'),
+        !co.hasWebsite && React.createElement(Btn, {full:true, onClick:function(){props.onBuildWebsite && props.onBuildWebsite(co);}, style:{background:'rgba(0,204,122,.08)', border:'1px solid rgba(0,204,122,.3)', color:'var(--gn)'}}, '\uD83C\uDF10 Build Their Website with AI'),
+        co.hasWebsite && co.webScore < 60 && React.createElement(Btn, {full:true, onClick:function(){props.onBuildWebsite && props.onBuildWebsite(co, 'redesign');}, style:{background:'rgba(245,166,35,.08)', border:'1px solid rgba(245,166,35,.3)', color:'var(--am)'}}, '\uD83D\uDD27 Redesign Pitch + Website Demo'),
+        React.createElement(Btn, {full:true, onClick:function(){props.onCampaign(co,'google');}}, '\uD83D\uDD0E Build Google Ads Campaign'),
+        React.createElement(Btn, {full:true, onClick:function(){props.onCampaign(co,'meta');}}, '\uD83D\uDCCA Build Meta Ads Campaign'),
+        React.createElement(Btn, {full:true, onClick:function(){props.onEmail(co,'linkedin');}}, '\uD83D\uDCBC LinkedIn Message Draft'),
+        React.createElement(Btn, {full:true, onClick:function(){props.onEmail(co,'sms');}}, '\uD83D\uDCF1 SMS Outreach Script'))),
+    React.createElement(InfoSection, {title:'Contact'},
+      React.createElement(Row, {label:'Email', value:co.email, accent:true}),
+      React.createElement(Row, {label:'Phone', value:co.phone}),
+      React.createElement(Row, {label:'Website', value:co.website, accent:true})),
+    pts.length > 0 && React.createElement(InfoSection, {title:'Key Talking Points'},
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:6}},
+        pts.slice(0,4).map(function(p, i) {
+          return React.createElement('div', {key:i, style:{fontSize:12, color:'var(--tx2)', background:'var(--bg4)', borderRadius:6, padding:'8px 10px', lineHeight:1.5, borderLeft:'2px solid var(--ac)'}}, p);
+        }))));
+}
+
+// ─── SIDEBAR ──────────────────────────────────────────────────────────────────
+
+var NAV = [
+  {id:'search',      label:'Search & Scout',    icon:'SC', sec:'Intelligence'},
+  {id:'profiles',    label:'Company Profiles',  icon:'CO', sec:'Intelligence'},
+  {id:'adIntel',     label:'Ad Intelligence',   icon:'AD', sec:'Intelligence'},
+  {id:'webIntel',    label:'Website Intel',     icon:'WB', sec:'Intelligence'},
+  {id:'campaigns',   label:'Campaigns',         icon:'CA', sec:'Marketing'},
+  {id:'outreach',    label:'Outreach Queue',    icon:'OU', sec:'Marketing'},
+  {id:'webBuilder',  label:'Website Builder',   icon:'WS', sec:'Marketing'},
+  {id:'agents',      label:'Agent Monitor',     icon:'AG', sec:'System'},
+  {id:'settings',    label:'Settings',          icon:'ST', sec:'System'},
+];
+
+function Sidebar(props) {
+  var view = props.view;
+  var done = props.done;
+  var running = props.running;
+  var isMobile = props.isMobile;
+  var open = props.open;
+
+  function navClick(id) {
+    props.setView(id);
+    if (isMobile) props.onClose();
+  }
+
+  return React.createElement(React.Fragment, null,
+    isMobile && open && React.createElement('div', {
+      onClick: props.onClose,
+      style:{position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:199, backdropFilter:'blur(2px)'}
+    }),
+    React.createElement('div', {style:{
+      width:228, minWidth:228, background:'var(--bg2)', borderRight:'1px solid var(--br)',
+      display:'flex', flexDirection:'column', height:'100vh',
+      position:'fixed', left:0, top:0, zIndex:200,
+      transform: isMobile ? (open ? 'translateX(0)' : 'translateX(-100%)') : 'translateX(0)',
+      transition:'transform .25s cubic-bezier(.4,0,.2,1)',
+      boxShadow: isMobile && open ? '4px 0 24px rgba(0,0,0,.4)' : 'none'
+    }},
+      React.createElement('div', {style:{padding:'15px 14px', borderBottom:'1px solid var(--br)', display:'flex', alignItems:'center', gap:10}},
+        React.createElement('div', {style:{width:33, height:33, background:'var(--ac)', borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:'#fff', fontFamily:'var(--mo)', flexShrink:0}}, 'LS'),
+        React.createElement('div', {style:{flex:1}},
+          React.createElement('div', {style:{fontSize:15, fontWeight:600, color:'var(--tx)', letterSpacing:0}}, 'LeadScout'),
+          React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', fontFamily:'var(--mo)'}}, 'Market Intel \u00b7 v3.0')),
+        isMobile && React.createElement('button', {
+          onClick: props.onClose,
+          style:{background:'var(--bg4)', border:'1px solid var(--br2)', borderRadius:6, width:28, height:28, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--tx3)', fontSize:16, cursor:'pointer', flexShrink:0}
+        }, '\u00d7')),
+      React.createElement('div', {style:{flex:1, overflowY:'auto', paddingBottom:8}},
+        ['Intelligence','Marketing','System'].map(function(sec) {
+          return React.createElement('div', {key:sec},
+            React.createElement('div', {style:{padding:'13px 12px 4px', fontSize:10, color:'var(--tx3)', textTransform:'uppercase', letterSpacing:'1.5px', fontFamily:'var(--mo)'}}, sec),
+            NAV.filter(function(n) { return n.sec === sec; }).map(function(item) {
+              var active = view === item.id;
+              return React.createElement('div', {
+                key:item.id,
+                onClick:function(){navClick(item.id);},
+                style:{display:'flex', alignItems:'center', gap:9, padding:'8px 11px', margin:'1px 7px', borderRadius:8, cursor:'pointer',
+                  fontSize:13, fontWeight: active ? 500 : 400, color: active ? 'var(--ac2)' : 'var(--tx2)',
+                  background: active ? 'var(--ac3)' : 'transparent',
+                  border:'1px solid ' + (active ? 'rgba(59,111,255,.22)' : 'transparent'),
+                  transition:'all .15s', userSelect:'none'}},
+                React.createElement('span', {style:{width:24, height:24, borderRadius:6, border:'1px solid ' + (active ? 'rgba(79,124,255,.3)' : 'var(--br)'), background: active ? 'var(--ac3)' : 'var(--bg3)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontFamily:'var(--mo)', fontWeight:700, color: active ? 'var(--ac2)' : 'var(--tx3)', flexShrink:0}}, item.icon),
+                React.createElement('span', null, item.label),
+                (item.id === 'profiles' || item.id === 'adIntel') && done &&
+                  React.createElement('span', {style:{marginLeft:'auto', background:'var(--ac4)', color:'var(--ac2)', fontSize:10, fontFamily:'var(--mo)', padding:'1px 6px', borderRadius:10}}, COMPANIES.length),
+                item.id === 'webIntel' && done &&
+                  React.createElement('span', {style:{marginLeft:'auto', background:'var(--am2)', color:'var(--am)', fontSize:10, fontFamily:'var(--mo)', padding:'1px 6px', borderRadius:10}}, COMPANIES.filter(function(c){return !c.hasWebsite || c.webScore < 60;}).length),
+                item.id === 'outreach' && done &&
+                  React.createElement('span', {style:{marginLeft:'auto', background:'var(--gn3)', color:'var(--gn)', fontSize:10, fontFamily:'var(--mo)', padding:'1px 6px', borderRadius:10}}, COMPANIES.filter(function(c){return c.pri==='high';}).length));
+            }));
+        })),
+      React.createElement('div', {style:{margin:'8px 10px 12px', padding:'10px 12px', background: done ? 'var(--gn2)' : 'var(--bg3)', border:'1px solid ' + (done ? 'var(--gn3)' : 'var(--br)'), borderRadius:10}},
+        React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', color: running ? 'var(--ac)' : done ? 'var(--gn)' : 'var(--tx3)', marginBottom:4, display:'flex', alignItems:'center', gap:5}},
+          React.createElement('span', {style:{display:'inline-block', width:6, height:6, borderRadius:'50%', background: running ? 'var(--ac)' : done ? 'var(--gn)' : 'var(--tx3)', animation: running ? 'pulse 1s infinite' : 'none'}}),
+          running ? 'AGENTS RUNNING' : done ? 'PIPELINE READY' : 'SYSTEM IDLE'),
+        React.createElement('div', {style:{fontSize:11, color:'var(--tx2)'}}, running ? AGENT_LIST.length + ' agents active \u00b7 scan in progress' : done ? COMPANIES.length + ' profiles \u00b7 ' + AGENT_LIST.length + ' agents \u00b7 ready' : AGENT_LIST.length + ' agents standby \u00b7 awaiting query'))));
+}
+
+// ─── SEARCH PAGE ──────────────────────────────────────────────────────────────
+
+function AgentStep(props) {
+  var ag = props.ag;
+  var isLast = props.isLast;
+  var colors = {idle:'var(--tx3)', running:'var(--ac)', done:'var(--gn)'};
+  var bgMap = {idle:'var(--bg2)', running:'var(--bg4)', done:'var(--gn2)'};
+  return React.createElement('div', {style:{flex:1, minWidth:76, padding:'11px 8px', textAlign:'center', background:bgMap[ag.status], borderRight: isLast ? 'none' : '1px solid var(--br)', transition:'background .4s'}},
+    React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', fontWeight:700, color:colors[ag.status], marginBottom:5}}, ag.status === 'done' ? 'OK' : ag.short.toUpperCase().slice(0,3)),
+    React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', fontWeight:700, color:'var(--tx)', marginBottom:2}}, ag.short),
+    React.createElement('div', {style:{fontSize:9, color:colors[ag.status], fontFamily:'var(--mo)', animation: ag.status==='running'?'pulse 1.2s infinite':'none'}},
+      ag.status === 'running' ? '\u25cf RUN' : ag.status === 'done' ? '\u2713 DONE' : '- IDLE'));
+}
+
+function SearchPage(props) {
+  var [kw, setKw] = useState('');
+  var [loc, setLoc] = useState('');
+  var [count, setCount] = useState(12);
+  var [running, setRunning] = useState(false);
+  var [done, setDone] = useState(false);
+  var [agSt, setAgSt] = useState(AGENT_LIST.map(function(a) { return Object.assign({}, a, {status:'idle'}); }));
+  var [logs, setLogs] = useState([]);
+  var [prog, setProg] = useState(0);
+  var [sel, setSel] = useState(null);
+  var [filter, setFilter] = useState('all');
+  var [dataRev, setDataRev] = useState(0);
+  var logRef = useRef(null);
+  var timers = useRef([]);
+
+  useEffect(function() {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs]);
+
+  function setAS(id, st) {
+    setAgSt(function(prev) { return prev.map(function(a) { return a.id === id ? Object.assign({}, a, {status:st}) : a; }); });
+  }
+  function addLog(l) {
+    setLogs(function(prev) { return prev.concat([Object.assign({}, l, {id:Date.now()+Math.random()})]); });
+  }
+  function refreshData() {
+    setDataRev(function(v) { return v + 1; });
+  }
+
+  function launch() {
+    if (running) return;
+    var kwVal = kw.trim() || 'business';
+    var locVal = loc.trim() || 'Sydney';
+    var cntVal = Math.max(4, Math.min(parseInt(count) || 12, 30));
+    COMPANIES = generateCompanies(kwVal, locVal, cntVal);
+    refreshData();
+    setRunning(true); setDone(false); setLogs([]); setProg(0); setSel(null);
+    if (props.onStart) props.onStart();
+    setAgSt(AGENT_LIST.map(function(a) { return Object.assign({}, a, {status:'idle'}); }));
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    var T = getLogs(kwVal, locVal, cntVal);
+    var order = [
+      {id:'maps',    logs:T.maps,    p0:0,  p1:15},
+      {id:'gmb',     logs:T.gmb,     p0:15, p1:28},
+      {id:'gads',    logs:T.gads,    p0:28, p1:44},
+      {id:'meta',    logs:T.meta,    p0:44, p1:58},
+      {id:'web',     logs:T.web,     p0:58, p1:74},
+      {id:'profile', logs:T.profile, p0:74, p1:88},
+      {id:'scorer',  logs:T.scorer,  p0:88, p1:100},
+    ];
+    var cursor = 200;
+    order.forEach(function(item) {
+      (function(it, cur) {
+        var tid = setTimeout(function() { setAS(it.id, 'running'); }, cur);
+        timers.current.push(tid);
+        if (it.id === 'meta') {
+          var verifyTid = setTimeout(function() {
+            verifyMetaAdsForCompanies(COMPANIES, locVal, addLog, refreshData);
+          }, cur + 450);
+          timers.current.push(verifyTid);
+        }
+        it.logs.forEach(function(l, i) {
+          var tid2 = setTimeout(function() {
+            addLog(l);
+            setProg(Math.round(it.p0 + ((it.p1 - it.p0) * (i + 1) / it.logs.length)));
+          }, cur + 300 + i * 700);
+          timers.current.push(tid2);
+        });
+        var endCur = cur + 300 + it.logs.length * 700 + 300;
+        var tid3 = setTimeout(function() { setAS(it.id, 'done'); }, endCur);
+        timers.current.push(tid3);
+      })(item, cursor);
+      cursor += 300 + item.logs.length * 700 + 700;
+    });
+    var finTid = setTimeout(function() { setRunning(false); setDone(true); props.onDone(); }, cursor + 300);
+    timers.current.push(finTid);
+  }
+
+  var filtered = COMPANIES.filter(function(co) {
+    if (filter === 'google') return co.gads;
+    if (filter === 'meta') return co.mads;
+    if (filter === 'noads') return !co.gads && !co.mads;
+    if (filter === 'high') return co.pri === 'high';
+    if (filter === 'nosite') return !co.hasWebsite;
+    if (filter === 'badsite') return co.hasWebsite && co.webScore < 60;
+    return true;
+  });
+
+  var totalSpend = COMPANIES.reduce(function(s, c) { return s + c.spend; }, 0);
+  var compact = window.innerWidth < 760;
+  var iStyle = {background:'var(--bg)', border:'1px solid var(--br2)', borderRadius:8, padding:'11px 14px', fontSize:14, color:'var(--tx)', outline:'none', fontFamily:'var(--fn)', minWidth:0};
+
+  return React.createElement('div', {style:{display:'flex', height:'100%', overflow:'hidden'}},
+    React.createElement('div', {style:{flex:1, overflowY:'auto', padding: compact ? 14 : 20}},
+      React.createElement('div', {style:{background:'var(--bg2)', border:'1px solid var(--br)', borderRadius:8, padding:compact ? 16 : 20, marginBottom:18}},
+        React.createElement('div', {style: label({marginBottom:12})}, 'Market Query'),
+        React.createElement('div', {style:{display:'flex', flexDirection:compact ? 'column' : 'row', gap:10, marginBottom:12}},
+          React.createElement('input', {value:kw, onChange:function(e){setKw(e.target.value);}, placeholder:'Keyword \u2014 restaurant, physio, law firm...', style:Object.assign({}, iStyle, {flex:1})}),
+          React.createElement('input', {value:loc, onChange:function(e){setLoc(e.target.value);}, placeholder:'Location \u2014 Sydney, Melbourne...', style:Object.assign({}, iStyle, {width:compact ? '100%' : 220})}),
+          React.createElement('input', {type:'number', value:count, min:4, max:30, onChange:function(e){setCount(e.target.value);}, title:'Number of results (4-30)', style:Object.assign({}, iStyle, {width:compact ? '100%' : 82, textAlign:compact ? 'left' : 'center'})}),
+          React.createElement('button', {onClick:launch, disabled:running, style:{background: running ? 'var(--bg4)' : 'var(--ac)', border:'none', borderRadius:8, padding:'11px 22px', color: running ? 'var(--tx3)' : '#fff', fontSize:13, fontWeight:600, cursor: running ? 'not-allowed' : 'pointer', whiteSpace:'nowrap', fontFamily:'var(--fn)', transition:'all .2s'}}, running ? 'Scanning...' : 'Run Scan')),
+        React.createElement('div', {style:{height:3, background:'var(--br)', borderRadius:2, overflow:'hidden', marginBottom: logs.length ? 12 : 0}},
+          React.createElement('div', {style:{height:'100%', background: done ? 'var(--gn)' : 'var(--ac)', borderRadius:2, width:prog+'%', transition:'width .6s ease'}})),
+        logs.length > 0 && React.createElement('div', {ref:logRef, style:{background:'#03050a', border:'1px solid var(--br)', borderRadius:8, padding:'11px 13px', fontFamily:'var(--mo)', fontSize:11, lineHeight:1.9, maxHeight:160, overflowY:'auto', marginTop:12}},
+          logs.map(function(l) {
+            return React.createElement('div', {key:l.id, style:{color: l.t==='success'?'var(--gn)':l.t==='info'?'#4a9eff':l.t==='warn'?'var(--am)':'var(--tx3)'}}, l.m);
+          }),
+          running && React.createElement('span', {style:{color:'var(--ac)', animation:'blink 1s infinite'}}, '\u2588'))),
+      React.createElement('div', {style:{display:'flex', marginBottom:18, borderRadius:8, border:'1px solid var(--br)', overflowX:'auto', overflowY:'hidden'}},
+        agSt.map(function(ag, i) {
+          return React.createElement(AgentStep, {key:ag.id, ag:ag, isLast: i === agSt.length - 1});
+        })),
+      done && React.createElement('div', {className:'fade-up'},
+        React.createElement('div', {style:{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:18}},
+          [{label:'Companies Found', val:COMPANIES.length, color:'var(--ac)'}, {label:'Active Advertisers', val:COMPANIES.filter(function(c){return c.gads||c.mads;}).length, color:'var(--gn)'}, {label:'High Priority', val:COMPANIES.filter(function(c){return c.pri==='high';}).length, color:'var(--am)'}, {label:'Total Spend/Mo', val:'$' + (totalSpend/1000).toFixed(1) + 'K', color:'var(--pu)'}].map(function(x) {
+            return React.createElement(StatCard, {key:x.label, label:x.label, val:x.val, color:x.color});
+          })),
+        React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14}},
+          React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)'}}, 'Results \u2014 ', React.createElement('span', {style:{color:'var(--tx3)', fontWeight:400}}, filtered.length + ' companies')),
+          React.createElement('div', {style:{display:'flex', gap:5}},
+            [['all','All'],['google','Google'],['meta','Meta'],['noads','No Ads'],['nosite','No Website'],['badsite','Bad Website'],['high','Priority']].map(function(pair) {
+              return React.createElement('button', {key:pair[0], onClick:function(){setFilter(pair[0]);}, style:{padding:'5px 11px', fontSize:11, fontFamily:'var(--mo)', background: filter===pair[0]?'var(--ac4)':'var(--bg3)', border:'1px solid ' + (filter===pair[0]?'rgba(59,111,255,.3)':'var(--br)'), color: filter===pair[0]?'var(--ac2)':'var(--tx3)', borderRadius:20, cursor:'pointer', transition:'all .15s'}}, pair[1]);
+            }))),
+        React.createElement('div', {style:{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(285px,1fr))', gap:12}},
+          filtered.map(function(co) {
+            return React.createElement(CompanyCard, {key:co.id, co:co, selected:sel&&sel.id===co.id, onClick:function(){ setSel(sel&&sel.id===co.id ? null : co); }});
+          }))),
+      !done && !running && React.createElement('div', {style:{textAlign:'center', padding:'60px 20px', color:'var(--tx3)'}},
+        React.createElement('div', {style:{fontSize:11, fontFamily:'var(--mo)', letterSpacing:1, color:'var(--tx3)', marginBottom:12}}, 'READY'),
+        React.createElement('div', {style:{fontSize:16, fontWeight:500, color:'var(--tx2)', marginBottom:8}}, 'Start a market scan'),
+        React.createElement('div', {style:{fontSize:13, lineHeight:1.7, maxWidth:380, margin:'0 auto'}}, 'Enter a keyword and location to profile local businesses across maps, ads, websites and outreach signals with ' + AGENT_LIST.length + ' workflow agents.'))),
+    sel && React.createElement(DetailPanel, {co:sel, onClose:function(){setSel(null);}, onEmail:props.onEmail, onCampaign:props.onCampaign, onBuildWebsite:props.onBuildWebsite}));
+}
+
+// ─── PROFILES PAGE ────────────────────────────────────────────────────────────
+
+
+// ─── WEBSITE INTEL PAGE ───────────────────────────────────────────────────────
+
+function WebIntelPage(props) {
+  var done = props.done;
+  var [sort, setSort] = useState('score');
+  var [filter, setFilter] = useState('all');
+  var [sel, setSel] = useState(null);
+
+  if (!done) return React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'center', height:'100%', flexDirection:'column', gap:12, color:'var(--tx3)'}},
+    React.createElement('div', {style:{fontSize:36, opacity:.3}}, '\uD83C\uDF10'),
+    React.createElement('div', {style:{fontSize:16, color:'var(--tx2)', fontWeight:500}}, 'No website data yet'),
+    React.createElement('div', {style:{fontSize:13}}, 'Run a search to audit all websites'));
+
+  var noSite = COMPANIES.filter(function(c) { return !c.hasWebsite; });
+  var badSite = COMPANIES.filter(function(c) { return c.hasWebsite && c.webScore < 60; });
+  var goodSite = COMPANIES.filter(function(c) { return c.hasWebsite && c.webScore >= 60; });
+
+  var filtered = COMPANIES.filter(function(co) {
+    if (filter === 'nosite') return !co.hasWebsite;
+    if (filter === 'bad') return co.hasWebsite && co.webScore < 60;
+    if (filter === 'nossl') return co.hasWebsite && !co.webHttps;
+    if (filter === 'nomobile') return co.hasWebsite && !co.webMobile;
+    return true;
+  }).sort(function(a, b) {
+    if (sort === 'score') return a.webScore - b.webScore;
+    if (sort === 'opp') return b.score - a.score;
+    if (sort === 'perf') return a.webPerf - b.webPerf;
+    return a.webSeo - b.webSeo;
+  });
+
+  function gradeColor(g) { return g==='A'?'var(--gn)':g==='B'?'#22d3ee':g==='C'?'var(--am)':g==='D'||g==='F'?'var(--rd)':'var(--rd)'; }
+  function gradeBg(g) { return g==='A'?'var(--gn2)':g==='B'?'rgba(34,211,238,.09)':g==='C'?'var(--am2)':'var(--rd2)'; }
+
+  return React.createElement('div', {style:{display:'flex', height:'100%', overflow:'hidden'}},
+    React.createElement('div', {style:{flex:1, overflowY:'auto', padding:20}},
+      React.createElement('div', {style:{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:18}},
+        [{label:'No Website', val:noSite.length, color:'var(--rd)'}, {label:'Poor Website (C/D/F)', val:badSite.length, color:'var(--am)'}, {label:'Good Website (A/B)', val:goodSite.length, color:'var(--gn)'}, {label:'Website Opportunities', val:noSite.length+badSite.length, color:'var(--pu)'}].map(function(x) {
+          return React.createElement(StatCard, {key:x.label, label:x.label, val:x.val, color:x.color});
+        })),
+      React.createElement('div', {style:{background:'var(--rd2)', border:'1px solid rgba(255,77,106,.2)', borderRadius:10, padding:'12px 14px', marginBottom:18, fontSize:12, color:'var(--tx2)', lineHeight:1.7}},
+        React.createElement('span', {style:{color:'var(--rd)', fontWeight:600}}, '\uD83C\uDFAF Opportunity Alert: '),
+        noSite.length + ' businesses have no website — that\'s your strongest pitch. ' + badSite.length + ' more have weak websites (grade C or below) that are actively hurting their business. Total addressable opportunities: ' + (noSite.length + badSite.length) + ' companies.'),
+      React.createElement('div', {style:{display:'flex', gap:8, alignItems:'center', marginBottom:14, flexWrap:'wrap'}},
+        React.createElement('div', {style:{display:'flex', gap:5}},
+          [['all','All'],['nosite','No Website'],['bad','Grade C/D/F'],['nossl','No HTTPS'],['nomobile','Not Mobile']].map(function(pair) {
+            return React.createElement('button', {key:pair[0], onClick:function(){setFilter(pair[0]);}, style:{padding:'5px 11px', fontSize:11, fontFamily:'var(--mo)', background: filter===pair[0]?'var(--ac4)':'var(--bg2)', border:'1px solid ' + (filter===pair[0]?'rgba(59,111,255,.3)':'var(--br)'), color: filter===pair[0]?'var(--ac2)':'var(--tx3)', borderRadius:20, cursor:'pointer'}}, pair[1]);
+          })),
+        React.createElement('span', {style:{fontSize:12, color:'var(--tx3)', marginLeft:'auto'}},'Sort:'),
+        [['score','Web Score'],['opp','Opp Score'],['perf','Performance'],['seo','SEO']].map(function(pair) {
+          return React.createElement('button', {key:pair[0], onClick:function(){setSort(pair[0]);}, style:{padding:'5px 11px', fontSize:11, fontFamily:'var(--mo)', background: sort===pair[0]?'var(--ac4)':'var(--bg2)', border:'1px solid ' + (sort===pair[0]?'rgba(59,111,255,.3)':'var(--br)'), color: sort===pair[0]?'var(--ac2)':'var(--tx3)', borderRadius:20, cursor:'pointer', whiteSpace:'nowrap'}}, pair[1]);
+        })),
+      React.createElement('div', {style:{overflowX:'auto'}},
+        React.createElement('table', {style:{width:'100%', borderCollapse:'collapse'}},
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              ['Company','Website','Grade','Performance','SEO','HTTPS','Mobile','Issues','Opp Score','Action'].map(function(h) {
+                return React.createElement('th', {key:h, style:{padding:'8px 10px', textAlign:'left', fontSize:10, fontFamily:'var(--mo)', color:'var(--tx3)', textTransform:'uppercase', letterSpacing:'.8px', borderBottom:'1px solid var(--br)', whiteSpace:'nowrap'}}, h);
+              }))),
+          React.createElement('tbody', null,
+            filtered.map(function(co, i) {
+              var gc = !co.hasWebsite ? 'var(--rd)' : gradeColor(co.webGrade);
+              var gb = !co.hasWebsite ? 'var(--rd2)' : gradeBg(co.webGrade);
+              return React.createElement('tr', {key:co.id, onClick:function(){setSel(sel&&sel.id===co.id?null:co);}, style:{borderBottom:'1px solid var(--br)', background: sel&&sel.id===co.id?'var(--ac3)':i%2===0?'transparent':'rgba(255,255,255,.012)', cursor:'pointer', transition:'background .15s'}},
+                React.createElement('td', {style:{padding:'10px 10px'}},
+                  React.createElement('div', {style:{display:'flex', alignItems:'center', gap:8}},
+                    React.createElement(Avatar, {av:co.av, color:co.color, size:24}),
+                    React.createElement('div', {style:{fontSize:12, fontWeight:500, color:'var(--tx)', maxWidth:120, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, co.name))),
+                React.createElement('td', {style:{padding:'10px 10px', fontSize:11, color:'var(--ac2)', fontFamily:'var(--mo)', maxWidth:120}},
+                  co.hasWebsite
+                    ? React.createElement('a', {href:'https://' + co.website, target:'_blank', rel:'noopener noreferrer', style:{color:'var(--ac2)', textDecoration:'none', fontSize:10, display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, co.website)
+                    : React.createElement('span', {style:{color:'var(--rd)', fontSize:10}}, 'None')),
+                React.createElement('td', {style:{padding:'10px 10px'}},
+                  React.createElement('span', {style:{fontSize:11, fontFamily:'var(--mo)', fontWeight:700, padding:'3px 9px', borderRadius:20, background:gb, color:gc, border:'1px solid ' + gc + '33'}}, co.hasWebsite ? co.webGrade : 'N/A')),
+                React.createElement('td', {style:{padding:'10px 10px'}}, co.hasWebsite ? React.createElement(MiniBar, {val:co.webPerf}) : React.createElement('span', {style:{color:'var(--tx3)', fontSize:11}}, '—')),
+                React.createElement('td', {style:{padding:'10px 10px'}}, co.hasWebsite ? React.createElement(MiniBar, {val:co.webSeo}) : React.createElement('span', {style:{color:'var(--tx3)', fontSize:11}}, '—')),
+                React.createElement('td', {style:{padding:'10px 10px'}},
+                  React.createElement('span', {style:{fontSize:12, color: co.webHttps ? 'var(--gn)' : (co.hasWebsite ? 'var(--rd)' : 'var(--tx3)')}}, co.hasWebsite ? (co.webHttps ? '\u2713' : '\u00d7') : '—')),
+                React.createElement('td', {style:{padding:'10px 10px'}},
+                  React.createElement('span', {style:{fontSize:12, color: co.webMobile ? 'var(--gn)' : (co.hasWebsite ? 'var(--rd)' : 'var(--tx3)')}}, co.hasWebsite ? (co.webMobile ? '\u2713' : '\u00d7') : '—')),
+                React.createElement('td', {style:{padding:'10px 10px', fontSize:11, fontFamily:'var(--mo)', color: co.webIssues.filter(function(x){return x.sev==='high';}).length > 0 ? 'var(--rd)' : co.webIssues.length > 0 ? 'var(--am)' : 'var(--gn)'}},
+                  co.webIssues.length > 0 ? co.webIssues.filter(function(x){return x.sev==='high';}).length + ' crit, ' + co.webIssues.filter(function(x){return x.sev==='medium';}).length + ' med' : '\u2713 Clean'),
+                React.createElement('td', {style:{padding:'10px 10px'}},
+                  React.createElement('span', {style:{fontSize:12, fontFamily:'var(--mo)', fontWeight:700, color: co.score>=80?'var(--gn)':co.score>=55?'var(--am)':'var(--tx3)'}}, co.score)),
+                React.createElement('td', {style:{padding:'10px 10px'}},
+                  React.createElement('a', {href:'https://pagespeed.web.dev/analysis?url=https://' + encodeURIComponent(co.website), target:'_blank', rel:'noopener noreferrer', style:{fontSize:10, fontFamily:'var(--mo)', color:'var(--ac2)', textDecoration:'none', background:'var(--ac3)', border:'1px solid rgba(59,111,255,.2)', borderRadius:4, padding:'3px 7px', whiteSpace:'nowrap', display: co.hasWebsite ? 'inline-block' : 'none'}}, 'Audit \u2197'),
+                  !co.hasWebsite && React.createElement('span', {style:{fontSize:10, fontFamily:'var(--mo)', color:'var(--gn)', background:'var(--gn2)', border:'1px solid var(--gn3)', borderRadius:4, padding:'3px 7px', whiteSpace:'nowrap'}}, 'Build Site')));
+            }))))),
+    sel && React.createElement(DetailPanel, {co:sel, onClose:function(){setSel(null);}, onEmail:props.onEmail, onCampaign:props.onCampaign, onBuildWebsite:props.onBuildWebsite}));
+}
+
+function MiniBar(props) {
+  var val = props.val || 0;
+  var color = val >= 80 ? 'var(--gn)' : val >= 60 ? 'var(--am)' : 'var(--rd)';
+  return React.createElement('div', {style:{display:'flex', alignItems:'center', gap:5}},
+    React.createElement('div', {style:{width:40, height:4, background:'var(--bg4)', borderRadius:2, overflow:'hidden'}},
+      React.createElement('div', {style:{width:val+'%', height:'100%', background:color, borderRadius:2}})),
+    React.createElement('span', {style:{fontSize:10, fontFamily:'var(--mo)', color:'var(--tx2)', minWidth:24}}, val));
+}
+
+function ProfilesPage(props) {
+  var done = props.done;
+  var [sel, setSel] = useState(null);
+  var [sort, setSort] = useState('score');
+  var [q, setQ] = useState('');
+
+  if (!done) return React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'center', height:'100%', flexDirection:'column', gap:12, color:'var(--tx3)'}},
+    React.createElement('div', {style:{fontSize:36, opacity:.3}}, '\uD83C\uDFE2'),
+    React.createElement('div', {style:{fontSize:16, color:'var(--tx2)', fontWeight:500}}, 'No profiles yet'),
+    React.createElement('div', {style:{fontSize:13}}, 'Run a search to generate company profiles'));
+
+  var sorted = COMPANIES.filter(function(co) {
+    return !q || co.name.toLowerCase().includes(q.toLowerCase()) || co.suburb.toLowerCase().includes(q.toLowerCase());
+  }).sort(function(a, b) {
+    return sort==='score' ? b.score-a.score : sort==='spend' ? b.spend-a.spend : sort==='rating' ? b.rating-a.rating : b.reviews-a.reviews;
+  });
+
+  return React.createElement('div', {style:{display:'flex', height:'100%', overflow:'hidden'}},
+    React.createElement('div', {style:{flex:1, overflowY:'auto', padding:20}},
+      React.createElement('div', {style:{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:20}},
+        [{label:'Total Profiles', val:COMPANIES.length, color:'var(--tx)'}, {label:'Active Advertisers', val:COMPANIES.filter(function(c){return c.gads||c.mads;}).length, color:'var(--gn)'}, {label:'Cold Targets', val:COMPANIES.filter(function(c){return !c.gads&&!c.mads;}).length, color:'var(--am)'}, {label:'Market Spend/Mo', val:'$' + COMPANIES.reduce(function(s,c){return s+c.spend;},0).toLocaleString(), color:'var(--pu)'}].map(function(x) {
+          return React.createElement(StatCard, {key:x.label, label:x.label, val:x.val, color:x.color});
+        })),
+      React.createElement('div', {style:{display:'flex', gap:10, marginBottom:16, alignItems:'center'}},
+        React.createElement('input', {value:q, onChange:function(e){setQ(e.target.value);}, placeholder:'Search companies...', style:{flex:1, background:'var(--bg2)', border:'1px solid var(--br2)', borderRadius:8, padding:'9px 13px', fontSize:13, color:'var(--tx)', outline:'none', fontFamily:'var(--fn)'}}),
+        React.createElement('span', {style:{fontSize:12, color:'var(--tx3)', whiteSpace:'nowrap'}}, 'Sort:'),
+        [['score','Score'],['spend','Spend'],['rating','Rating'],['reviews','Reviews']].map(function(pair) {
+          return React.createElement('button', {key:pair[0], onClick:function(){setSort(pair[0]);}, style:{padding:'6px 11px', fontSize:11, fontFamily:'var(--mo)', background: sort===pair[0]?'var(--ac4)':'var(--bg2)', border:'1px solid ' + (sort===pair[0]?'rgba(59,111,255,.3)':'var(--br)'), color: sort===pair[0]?'var(--ac2)':'var(--tx3)', borderRadius:20, cursor:'pointer', whiteSpace:'nowrap'}}, pair[1]);
+        })),
+      React.createElement('div', {style:{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(285px,1fr))', gap:12}},
+        sorted.map(function(co) {
+          return React.createElement(CompanyCard, {key:co.id, co:co, selected:sel&&sel.id===co.id, onClick:function(){setSel(sel&&sel.id===co.id ? null : co);}});
+        }))),
+    sel && React.createElement(DetailPanel, {co:sel, onClose:function(){setSel(null);}, onEmail:props.onEmail, onCampaign:props.onCampaign, onBuildWebsite:props.onBuildWebsite}));
+}
+
+// ─── AD INTEL PAGE ────────────────────────────────────────────────────────────
+
+function AdIntelPage(props) {
+  var done = props.done;
+  var [tab, setTab] = useState('overview');
+
+  if (!done) return React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'center', height:'100%', flexDirection:'column', gap:12, color:'var(--tx3)'}},
+    React.createElement('div', {style:{fontSize:36, opacity:.3}}, '\uD83D\uDCCA'),
+    React.createElement('div', {style:{fontSize:16, color:'var(--tx2)', fontWeight:500}}, 'No data yet'),
+    React.createElement('div', {style:{fontSize:13}}, 'Run a search to load ad intelligence'));
+
+  var spendData = COMPANIES.map(function(co) { return {name:co.av, spend:co.spend, score:co.score}; });
+  var tt = {background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:8, fontSize:12, color:'var(--tx)', fontFamily:'var(--mo)', padding:'6px 10px'};
+
+  return React.createElement('div', {style:{padding:20, overflowY:'auto', height:'100%'}},
+    React.createElement('div', {style:{display:'flex', gap:6, marginBottom:20}},
+      [['overview','Overview'],['google','Google Ads'],['meta','Meta Ads'],['gaps','Ad Gaps']].map(function(pair) {
+        return React.createElement('button', {key:pair[0], onClick:function(){setTab(pair[0]);}, style:{padding:'7px 16px', fontSize:12, fontFamily:'var(--mo)', background: tab===pair[0]?'var(--ac4)':'var(--bg2)', border:'1px solid ' + (tab===pair[0]?'rgba(59,111,255,.3)':'var(--br)'), color: tab===pair[0]?'var(--ac2)':'var(--tx3)', borderRadius:20, cursor:'pointer'}}, pair[1]);
+      })),
+
+    tab === 'overview' && React.createElement('div', {className:'fade-up'},
+      React.createElement('div', {style:{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:18}},
+        [{label:'Total advertisers', val:COMPANIES.filter(function(c){return c.gads||c.mads;}).length, color:'var(--ac)'}, {label:'Google Ads running', val:COMPANIES.filter(function(c){return c.gads;}).length, color:'#8ab4f8'}, {label:'Meta Ads running', val:COMPANIES.filter(function(c){return c.mads;}).length, color:'#7da8ff'}, {label:'Creative fatigue', val:COMPANIES.filter(function(c){return c.fatigue;}).length, color:'var(--rd)'}].map(function(x) {
+          return React.createElement(StatCard, {key:x.label, label:x.label, val:x.val, color:x.color});
+        })),
+      React.createElement('div', {style:{background:'var(--bg2)', border:'1px solid var(--br)', borderRadius:12, padding:18, marginBottom:16}},
+        React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)', marginBottom:4}}, 'Estimated Monthly Ad Spend by Company'),
+        React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:16}}, 'Derived from auction signals, ad volume and placement frequency'),
+        React.createElement(ResponsiveContainer, {width:'100%', height:200},
+          React.createElement(BarChart, {data:spendData, barCategoryGap:'35%'},
+            React.createElement(XAxis, {dataKey:'name', stroke:'var(--tx3)', tick:{fontSize:11, fontFamily:'var(--mo)', fill:'var(--tx3)'}, axisLine:false, tickLine:false}),
+            React.createElement(YAxis, {stroke:'var(--tx3)', tick:{fontSize:10, fontFamily:'var(--mo)', fill:'var(--tx3)'}, axisLine:false, tickLine:false, tickFormatter:function(v){return '$'+v;}}),
+            React.createElement(Tooltip, {contentStyle:tt, formatter:function(v){return ['$'+v+'/mo','Spend'];}}),
+            React.createElement(Bar, {dataKey:'spend', fill:'var(--ac)', radius:[4,4,0,0]})))),
+      React.createElement('div', {style:{background:'var(--bg2)', border:'1px solid var(--br)', borderRadius:12, padding:18}},
+        React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)', marginBottom:4}}, 'Opportunity Score vs Ad Spend'),
+        React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:14}}, 'High score + low spend = prime outreach target'),
+        React.createElement('div', {style:{position:'relative', height:220, background:'var(--bg3)', borderRadius:8, overflow:'hidden'}},
+          [{text:'High Opp \u00b7 Low Spend',x:'4%',y:'5%',color:'var(--gn)'},{text:'High Opp \u00b7 High Spend',x:'52%',y:'5%',color:'var(--am)'},{text:'Low Opp \u00b7 Low Spend',x:'4%',y:'88%',color:'var(--tx3)'},{text:'Low Opp \u00b7 High Spend',x:'52%',y:'88%',color:'var(--tx3)'}].map(function(q2) {
+            return React.createElement('div', {key:q2.text, style:{position:'absolute', left:q2.x, top:q2.y, fontSize:9, fontFamily:'var(--mo)', color:q2.color, letterSpacing:'.5px'}}, q2.text);
+          }),
+          React.createElement('div', {style:{position:'absolute', left:'50%', top:0, bottom:0, width:1, background:'var(--br)'}}),
+          React.createElement('div', {style:{position:'absolute', top:'50%', left:0, right:0, height:1, background:'var(--br)'}}),
+          COMPANIES.map(function(co) {
+            var xp = Math.min(94, (co.spend/7000)*88) + 3;
+            var yp = Math.max(5, 93 - ((co.score/100)*84));
+            return React.createElement('div', {key:co.id, title:co.name, style:{position:'absolute', left:xp+'%', top:yp+'%', width:28, height:28, borderRadius:'50%', background:co.color, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, color:'#fff', fontFamily:'var(--mo)', transform:'translate(-50%,-50%)', boxShadow:'0 0 12px '+co.color+'55'}}, co.av);
+          })))),
+
+    tab === 'google' && React.createElement('div', {className:'fade-up', style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}},
+      COMPANIES.map(function(co) {
+        return React.createElement('div', {key:co.id, style:card()},
+          React.createElement('div', {style:{display:'flex', alignItems:'center', gap:10, marginBottom:12}},
+            React.createElement(Avatar, {av:co.av, color:co.color, size:32}),
+            React.createElement('div', null,
+              React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)'}}, co.name),
+              React.createElement('div', {style:{fontSize:10, color: co.gads ? 'var(--gn)' : 'var(--tx3)'}}, co.gads ? '\u25cf Active' : '\u25cb Not running')),
+            React.createElement('div', {style:{marginLeft:'auto', fontSize:18, fontFamily:'var(--mo)', fontWeight:700, color: co.gads ? 'var(--tx)' : 'var(--tx3)'}}, co.gs)),
+          co.gads
+            ? React.createElement('div', null,
+                React.createElement('div', {style:{background:'var(--bg3)', borderRadius:8, padding:'10px 12px', marginBottom:8}},
+                  React.createElement('div', {style:{fontSize:12, color:'#8ab4f8', fontWeight:600, marginBottom:3}}, co.gt),
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', lineHeight:1.5}}, co.gd)))
+            : React.createElement('div', {style:{background:'var(--rd2)', border:'1px solid var(--rd3)', borderRadius:8, padding:10, fontSize:12, color:'var(--rd)'}}, '\u26a0\ufe0f No Google Ads - opportunity to pitch'));
+      })),
+
+    tab === 'meta' && React.createElement('div', {className:'fade-up', style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}},
+      COMPANIES.map(function(co) {
+        return React.createElement('div', {key:co.id, style:card()},
+          React.createElement('div', {style:{display:'flex', alignItems:'center', gap:10, marginBottom:12}},
+            React.createElement(Avatar, {av:co.av, color:co.color, size:32}),
+            React.createElement('div', null,
+              React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)'}}, co.name),
+              React.createElement('div', {style:{fontSize:10, color: co.mads ? 'var(--gn)' : 'var(--tx3)'}}, co.mads ? '\u25cf Active' : '\u25cb Not running')),
+            co.fatigue && React.createElement('span', {style:{marginLeft:'auto', fontSize:9, fontFamily:'var(--mo)', background:'var(--rd2)', color:'var(--rd)', border:'1px solid var(--rd3)', borderRadius:20, padding:'2px 7px'}}, 'FATIGUE')),
+          co.mads
+            ? React.createElement('div', null,
+                React.createElement('div', {style:{background:'var(--bg3)', borderRadius:8, padding:'10px 12px', marginBottom:8}},
+                  React.createElement('div', {style:{fontSize:12, color:'#7da8ff', fontWeight:600, marginBottom:3}}, co.mt),
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', lineHeight:1.5}}, co.md)),
+                React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, 'Obj: ' + co.mobj + ' \u00b7 Running: ' + co.mdur))
+            : React.createElement('div', {style:{background:'var(--rd2)', border:'1px solid var(--rd3)', borderRadius:8, padding:10, fontSize:12, color:'var(--rd)'}}, '\u26a0\ufe0f No Meta Ads - untapped social audience'));
+      })),
+
+    tab === 'gaps' && React.createElement('div', {className:'fade-up', style:card({padding:18})},
+      React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)', marginBottom:14}}, 'Ad Gap Analysis - Who\'s Missing What'),
+      React.createElement('div', {style:{overflowX:'auto'}},
+        React.createElement('table', {style:{width:'100%', borderCollapse:'collapse'}},
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              ['Company','Maps Rank','Google Ads','Meta Ads','Creative','Opp Score','Priority'].map(function(h) {
+                return React.createElement('th', {key:h, style:{padding:'8px 12px', textAlign:'left', fontSize:10, fontFamily:'var(--mo)', color:'var(--tx3)', textTransform:'uppercase', letterSpacing:'.8px', borderBottom:'1px solid var(--br)', whiteSpace:'nowrap'}}, h);
+              }))),
+          React.createElement('tbody', null,
+            [...COMPANIES].sort(function(a,b){return b.score-a.score;}).map(function(co, i) {
+              var priColor = co.pri==='high' ? 'var(--gn)' : co.pri==='medium' ? 'var(--am)' : 'var(--tx3)';
+              var priBg    = co.pri==='high' ? 'var(--gn2)' : co.pri==='medium' ? 'var(--am2)' : 'var(--bg4)';
+              var priBr    = co.pri==='high' ? 'var(--gn3)' : co.pri==='medium' ? 'var(--am3)' : 'var(--br)';
+              return React.createElement('tr', {key:co.id, style:{borderBottom:'1px solid var(--br)', background: i%2===0?'transparent':'rgba(255,255,255,.015)'}},
+                React.createElement('td', {style:{padding:'10px 12px'}},
+                  React.createElement('div', {style:{display:'flex', alignItems:'center', gap:8}},
+                    React.createElement(Avatar, {av:co.av, color:co.color, size:24}),
+                    React.createElement('div', {style:{fontSize:12, fontWeight:500, color:'var(--tx)'}}, co.name))),
+                React.createElement('td', {style:{padding:'10px 12px', fontSize:12, color:'var(--tx2)', fontFamily:'var(--mo)'}}, '#' + co.rank),
+                React.createElement('td', {style:{padding:'10px 12px'}}, React.createElement(GapPill, {ok:co.gads, yes:'\u2713 Running', no:'\u00d7 Missing'})),
+                React.createElement('td', {style:{padding:'10px 12px'}}, React.createElement(GapPill, {ok:co.mads, yes:'\u2713 Running', no:'\u00d7 Missing'})),
+                React.createElement('td', {style:{padding:'10px 12px'}}, React.createElement(GapPill, {ok:!co.fatigue&&(co.gads||co.mads), yes:'\u2713 Fresh', no:co.fatigue?'\u26a0 Fatigued':'- None', warn:co.fatigue})),
+                React.createElement('td', {style:{padding:'10px 12px'}},
+                  React.createElement('div', {style:{display:'flex', alignItems:'center', gap:6}},
+                    React.createElement('div', {style:{flex:1, height:4, background:'var(--bg4)', borderRadius:2, overflow:'hidden', minWidth:50}},
+                      React.createElement('div', {style:{width:co.score+'%', height:'100%', background: co.score>=80?'var(--gn)':co.score>=60?'var(--am)':'var(--tx3)', borderRadius:2}})),
+                    React.createElement('span', {style:{fontSize:11, fontFamily:'var(--mo)', color:'var(--tx2)'}}, co.score))),
+                React.createElement('td', {style:{padding:'10px 12px'}},
+                  React.createElement('span', {style:{fontSize:10, fontFamily:'var(--mo)', fontWeight:700, padding:'3px 8px', borderRadius:20, background:priBg, color:priColor, border:'1px solid ' + priBr}}, co.pri.toUpperCase())));
+            }))))));
+}
+
+function GapPill(props) {
+  var color = props.warn ? 'var(--am)' : props.ok ? 'var(--gn)' : 'var(--rd)';
+  var bg    = props.warn ? 'var(--am2)' : props.ok ? 'var(--gn2)' : 'var(--rd2)';
+  var label = props.ok ? (props.yes + ' ~') : props.no;
+  return React.createElement('span', {title: props.ok ? 'Estimated — verify live' : '', style:{fontSize:10, fontFamily:'var(--mo)', fontWeight:700, padding:'3px 8px', borderRadius:20, background:bg, color:color, border:'1px solid ' + color + '33', whiteSpace:'nowrap', cursor: props.ok ? 'help' : 'default'}}, label);
+}
+
+// ─── OUTREACH PAGE ────────────────────────────────────────────────────────────
+
+function OutreachPage(props) {
+  var done = props.done;
+  var [sel, setSel] = useState(null);
+  var [tone, setTone] = useState('professional');
+  var [type, setType] = useState('cold_email');
+  var [gen, setGen] = useState(false);
+  var [result, setResult] = useState(null);
+  var [copied, setCopied] = useState(false);
+
+  useEffect(function() {
+    if (props.emailTarget) { setSel(props.emailTarget); props.setEmailTarget(null); }
+  }, [props.emailTarget]);
+
+  if (!done) return React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'center', height:'100%', flexDirection:'column', gap:12, color:'var(--tx3)'}},
+    React.createElement('div', {style:{fontSize:36, opacity:.3}}, '\u2709\ufe0f'),
+    React.createElement('div', {style:{fontSize:16, color:'var(--tx2)', fontWeight:500}}, 'No outreach data'),
+    React.createElement('div', {style:{fontSize:13}}, 'Run a search first'));
+
+  var hi = COMPANIES.filter(function(c) { return c.pri === 'high'; });
+  var other = COMPANIES.filter(function(c) { return c.pri !== 'high'; });
+
+  function generate() {
+    if (!sel || gen) return;
+    setGen(true); setResult(null);
+    var typeMap = {cold_email:'cold outreach email', linkedin:'LinkedIn connection message (max 300 chars)', sms:'SMS text message (max 160 chars)', followup:'follow-up email after no response'};
+    var toneMap = {professional:'professional and polished', friendly:'friendly and conversational', direct:'direct and bold', consultative:'consultative and insight-led'};
+    var prompt = 'You are a top B2B sales copywriter. Write a ' + typeMap[type] + ' to ' + sel.name + ', a ' + sel.type + ' in ' + sel.suburb + ', Sydney Australia.\n\nINTELLIGENCE:\n- Google Ads: ' + (sel.gads ? 'Running (score: ' + sel.gs + '/100)' : 'NOT running - missing all search traffic') + '\n- Meta Ads: ' + (sel.mads ? 'Running (score: ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')' : 'NOT running - social audience untapped') + '\n- Maps rank: #' + sel.rank + '\n- Reviews: ' + sel.reviews + ' at ' + sel.rating + ' stars\n- Opportunity: ' + sel.insight + '\n- Angle: ' + sel.angle + '\n\nTONE: ' + toneMap[tone] + '\nBe specific about their actual situation. No generic phrases.\n\nRespond ONLY in valid JSON: {"subject":"email subject or empty string","body":"the full message","ps":"P.S. line or empty string"}';
+    var key = getApiKey();
+    fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model:'claude-sonnet-4-6-20250514', max_tokens:900, messages:[{role:'user', content:prompt}]})})
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) throw new Error(d.error.message);
+        var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
+        return JSON.parse(txt.replace(/```json|```/g, '').trim());
+      })
+      .then(function(parsed) { setResult(parsed); })
+      .catch(function() { setResult(getMockEmail(sel, tone, type)); })
+      .finally(function() { setGen(false); });
+  }
+
+  function copyEmail() {
+    if (!result) return;
+    var t = (result.subject ? 'Subject: ' + result.subject + '\n\n' : '') + result.body + (result.ps ? '\n\nP.S. ' + result.ps : '');
+    navigator.clipboard && navigator.clipboard.writeText(t).catch(function(){});
+    setCopied(true); setTimeout(function() { setCopied(false); }, 2200);
+  }
+
+  function CoBtn(coProps) {
+    var c = coProps.co;
+    return React.createElement('div', {onClick:function(){setSel(c); setResult(null);}, style:{background: sel&&sel.id===c.id?'var(--ac3)':'var(--bg2)', border:'1px solid ' + (sel&&sel.id===c.id?'rgba(59,111,255,.3)':'var(--br)'), borderRadius:9, padding:'10px 11px', cursor:'pointer', transition:'all .15s'}},
+      React.createElement('div', {style:{display:'flex', alignItems:'center', gap:8}},
+        React.createElement(Avatar, {av:c.av, color:c.color, size:26}),
+        React.createElement('div', null,
+          React.createElement('div', {style:{fontSize:12, fontWeight:600, color:'var(--tx)'}}, c.name),
+          React.createElement('div', {style:{fontSize:10, color:'var(--tx3)'}}, c.angle))));
+  }
+
+  var selSt = {background:'var(--bg)', border:'1px solid var(--br2)', borderRadius:8, padding:'9px 12px', color:'var(--tx)', fontSize:13, fontFamily:'var(--fn)', outline:'none', width:'100%'};
+
+  return React.createElement('div', {style:{display:'flex', height:'100%', overflow:'hidden'}},
+    React.createElement('div', {style:{width:296, minWidth:296, borderRight:'1px solid var(--br)', overflowY:'auto', padding:16}},
+      React.createElement('div', {style: label({marginBottom:10})}, '\uD83D\uDD25 High Priority'),
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5, marginBottom:18}},
+        hi.map(function(c) { return React.createElement(CoBtn, {key:c.id, co:c}); })),
+      React.createElement('div', {style: label({marginBottom:10})}, 'Other Leads'),
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5}},
+        other.map(function(c) { return React.createElement(CoBtn, {key:c.id, co:c}); }))),
+    React.createElement('div', {style:{flex:1, overflowY:'auto', padding:20}},
+      !sel
+        ? React.createElement('div', {style:{textAlign:'center', padding:'60px 20px', color:'var(--tx3)'}}, React.createElement('div', {style:{fontSize:28, opacity:.4, marginBottom:12}}, '\u261a'), React.createElement('div', {style:{fontSize:15, color:'var(--tx2)', fontWeight:500}}, 'Select a company'))
+        : React.createElement('div', {className:'fade-up'},
+            React.createElement('div', {style:Object.assign({}, card({padding:'16px', marginBottom:16}), {display:'flex', alignItems:'flex-start', gap:12})},
+              React.createElement(Avatar, {av:sel.av, color:sel.color, size:42}),
+              React.createElement('div', {style:{flex:1}},
+                React.createElement('div', {style:{fontSize:15, fontWeight:600, color:'var(--tx)', marginBottom:2}}, sel.name),
+                React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', marginBottom:8}}, sel.address),
+                React.createElement('div', {style:{background:'var(--ac3)', border:'1px solid rgba(59,111,255,.2)', borderRadius:7, padding:'8px 10px', fontSize:12, color:'var(--ac2)'}}, '\uD83C\uDFAF Pitch angle: ' + sel.angle))),
+            React.createElement('div', {style:card({padding:16, marginBottom:16})},
+              React.createElement('div', {style: label({marginBottom:12})}, 'Generate Outreach'),
+              React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14}},
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:6}}, 'Message type'),
+                  React.createElement('select', {value:type, onChange:function(e){setType(e.target.value);}, style:selSt},
+                    React.createElement('option', {value:'cold_email'}, 'Cold Email'),
+                    React.createElement('option', {value:'linkedin'}, 'LinkedIn Message'),
+                    React.createElement('option', {value:'sms'}, 'SMS Text'),
+                    React.createElement('option', {value:'followup'}, 'Follow-up Email'))),
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:6}}, 'Tone'),
+                  React.createElement('select', {value:tone, onChange:function(e){setTone(e.target.value);}, style:selSt},
+                    React.createElement('option', {value:'professional'}, 'Professional'),
+                    React.createElement('option', {value:'friendly'}, 'Friendly & Casual'),
+                    React.createElement('option', {value:'direct'}, 'Direct & Bold'),
+                    React.createElement('option', {value:'consultative'}, 'Consultative')))),
+              React.createElement('button', {onClick:generate, disabled:gen, style:{width:'100%', padding:11, background: gen?'var(--bg4)':'var(--ac)', border:'none', borderRadius:9, color: gen?'var(--tx3)':'#fff', fontSize:13, fontWeight:600, cursor: gen?'not-allowed':'pointer', fontFamily:'var(--fn)', display:'flex', alignItems:'center', justifyContent:'center', gap:8}},
+                gen ? [React.createElement('span', {key:'s', style:{animation:'spin 1s linear infinite', display:'inline-block'}}, '\u27f3'), ' Generating with Claude AI...'] : '\u2728 Generate Outreach Message')),
+            result && React.createElement('div', {className:'fade-up', style:card({padding:16, border:'1px solid rgba(59,111,255,.22)'})},
+              React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14}},
+                React.createElement('div', {style:{fontSize:11, color:'var(--ac2)', fontFamily:'var(--mo)'}}, '\u26a1 CLAUDE AI - GENERATED OUTREACH'),
+                React.createElement('div', {style:{display:'flex', gap:6}},
+                  React.createElement('button', {onClick:generate, style:{background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:7, padding:'6px 11px', color:'var(--tx2)', fontSize:12, cursor:'pointer', fontFamily:'var(--fn)'}}, '\u21bb Redo'),
+                  React.createElement('button', {onClick:copyEmail, style:{background: copied?'var(--gn2)':'var(--bg3)', border:'1px solid ' + (copied?'var(--gn3)':'var(--br2)'), borderRadius:7, padding:'6px 11px', color: copied?'var(--gn)':'var(--tx2)', fontSize:12, cursor:'pointer', fontFamily:'var(--fn)'}}, copied ? '\u2713 Copied!' : '\u2398 Copy'))),
+              result.subject && result.subject.length > 0 && React.createElement('div', {style:{background:'var(--bg3)', borderRadius:8, padding:'10px 12px', marginBottom:12}},
+                React.createElement('div', {style: label({marginBottom:4})}, 'SUBJECT LINE'),
+                React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)'}}, result.subject)),
+              React.createElement('div', {style:{background:'var(--bg3)', borderRadius:8, padding:14, lineHeight:1.8, fontSize:13, color:'var(--tx2)', whiteSpace:'pre-wrap'}}, result.body),
+              result.ps && result.ps.length > 0 && React.createElement('div', {style:{marginTop:10, padding:'10px 12px', background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:8, fontSize:12, color:'var(--am)'}}, '\uD83D\uDCA1 P.S. - ' + result.ps)))));
+}
+
+function getMockEmail(co, tone, type) {
+  var noG = !co.gads, noM = !co.mads;
+  if (type === 'sms') return {subject:'', body:'Hi - noticed ' + co.name + ' isn\'t running Google Ads yet. Your competitors in ' + co.suburb + ' are capturing patients you\'re missing. Quick call this week? - [Name]', ps:''};
+  if (type === 'linkedin') return {subject:'', body:'Hi! Noticed ' + co.name + ' has great reviews but ' + (noG ? 'no Google presence' : 'Meta ads showing creative fatigue') + '. I help dental practices in ' + co.suburb + ' grow. Worth a chat?', ps:''};
+  return {
+    subject: noG && noM ? co.name + ': Your competitors are capturing your patients online' : noG ? co.name + ': The Google traffic you\'re missing' : co.fatigue ? 'Quick win for ' + co.name + '\'s ad performance' : 'Growing ' + co.name + '\'s patient flow',
+    body: 'Hi ' + co.name + ' team,\n\nI\'ve been looking at the dental market in ' + co.suburb + ' and noticed something about ' + co.name + '.\n\n' + (noG && noM ? 'You have no active digital ad campaigns - but your competitors are spending thousands per month to appear above you when people search for a dentist in ' + co.suburb + '. With ' + co.reviews + ' reviews at ' + co.rating + ' stars, you have a strong reputation. The problem is potential patients searching right now simply can\'t find you.' : noG ? 'You\'re running Meta ads - great start. But when someone in ' + co.suburb + ' searches "dentist near me" right now, you\'re invisible on Google. That\'s the highest-intent traffic going straight to your competitors.' : co.fatigue ? 'Your Meta creative has been running for ' + co.mdur + ' - industry benchmarks show CTR drops 30-40% after 21 days without refresh. A new creative could recover those leads fast.' : 'You\'re already advertising, which puts you ahead of most. I\'ve spotted some specific gaps in your current campaigns that are costing you leads.') + '\n\nI specialise in helping ' + co.type.toLowerCase() + 's in ' + co.suburb + ' build campaigns that bring in consistent patient enquiries. For similar practices, we typically see measurable results within 45 days.\n\nWould a 20-minute call this week make sense?\n\nBest,\n[Your name]',
+    ps: co.reviews + ' five-star reviews is a real asset - most practices I work with have half that. We can turn that into a major competitive advantage.'
+  };
+}
+
+// ─── CAMPAIGNS PAGE ───────────────────────────────────────────────────────────
+
+
+// ─── WEBSITE BUILDER PAGE ─────────────────────────────────────────────────────
+
+function WebsiteBuilderPage(props) {
+  var done = props.done;
+  var [sel, setSel] = useState(null);
+  var [style, setStyle] = useState('modern');
+  var [colorScheme, setColorScheme] = useState('professional');
+  var [building, setBuilding] = useState(false);
+  var [built, setBuilt] = useState(null);
+  var [preview, setPreview] = useState(false);
+  var [copied, setCopied] = useState(false);
+
+  useEffect(function() {
+    if (props.websiteTarget) { setSel(props.websiteTarget); props.setWebsiteTarget(null); setBuilt(null); }
+  }, [props.websiteTarget]);
+
+  if (!done) return React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'center', height:'100%', flexDirection:'column', gap:12, color:'var(--tx3)'}},
+    React.createElement('div', {style:{fontSize:36, opacity:.3}}, '\u2728'),
+    React.createElement('div', {style:{fontSize:16, color:'var(--tx2)', fontWeight:500}}, 'Website Builder'),
+    React.createElement('div', {style:{fontSize:13}}, 'Run a search, then build a demo website for any lead'));
+
+  var targets = COMPANIES.filter(function(c) { return !c.hasWebsite || c.webScore < 60; });
+  var others = COMPANIES.filter(function(c) { return c.hasWebsite && c.webScore >= 60; });
+
+  var selSt = {width:'100%', background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:7, padding:'8px 11px', color:'var(--tx)', fontSize:13, fontFamily:'var(--fn)', outline:'none'};
+
+  function build() {
+    if (!sel || building) return;
+    setBuilding(true); setBuilt(null); setPreview(false);
+    var styleDesc = {modern:'modern, clean, minimalist with strong CTAs', bold:'bold, high-contrast, impact-focused with large typography', elegant:'elegant, premium, sophisticated with refined spacing', local:'warm, local, community-focused with trust signals', medical:'clinical, trustworthy, professional with credibility markers'};
+    var colorDesc = {professional:'navy, white, gold accents', vibrant:'bright coral, white, dark navy', natural:'sage green, cream, warm brown', dark:'charcoal, white, electric blue', warm:'warm orange, cream, deep burgundy'};
+    var prompt = 'You are an expert web developer. Create a complete, production-ready single-page HTML website for a real local business.\n\nBusiness: ' + sel.name + '\nType: ' + sel.type + '\nLocation: ' + sel.suburb + ', Sydney NSW\nPhone: ' + sel.phone + '\nEmail: ' + sel.email + '\nServices: ' + sel.cats.join(', ') + '\nFounded: ' + sel.founded + '\nHours: ' + sel.hours + '\nRating: ' + sel.rating + ' stars, ' + sel.reviews + ' reviews\nBooking: ' + (sel.booking ? 'Yes' : 'No') + '\n\nDESIGN: ' + styleDesc[style] + '\nCOLORS: ' + colorDesc[colorScheme] + '\n\nREQUIREMENTS:\n- Complete HTML5 page with embedded CSS and minimal JS\n- Mobile-responsive using CSS flexbox/grid\n- Hero section with headline, subheadline, CTA button\n- Services/features section (use their actual service categories)\n- About section with trust signals (founded year, reviews, team)\n- Testimonials section (3 realistic fake reviews)\n- Contact section with phone, email, address\n- Google Maps embed placeholder\n- Booking CTA if applicable\n- Proper meta tags for SEO\n- Schema.org LocalBusiness markup\n- Fast loading (no external dependencies except Google Fonts)\n\nReturn ONLY the complete HTML code, nothing else. Start with <!DOCTYPE html>.';
+
+    var key = getApiKey();
+    fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model:'claude-sonnet-4-6-20250514', max_tokens:4000, messages:[{role:'user', content:prompt}]})})
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) throw new Error(d.error.message);
+        var html = (d.content || []).map(function(b) { return b.text || ''; }).join('');
+        // Extract just the HTML if there's any preamble
+        var start = html.indexOf('<!DOCTYPE');
+        if (start === -1) start = html.indexOf('<html');
+        if (start > -1) html = html.slice(start);
+        setBuilt(html);
+      })
+      .catch(function(e) {
+        setBuilt(getMockWebsite(sel, style, colorScheme));
+      })
+      .finally(function() { setBuilding(false); });
+  }
+
+  function copyCode() {
+    if (!built) return;
+    navigator.clipboard && navigator.clipboard.writeText(built).catch(function(){});
+    setCopied(true); setTimeout(function() { setCopied(false); }, 2200);
+  }
+
+  function downloadHtml() {
+    if (!built) return;
+    var blob = new Blob([built], {type:'text/html'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = (sel.name.replace(/[^a-z0-9]/gi,'_').toLowerCase() + '_website.html');
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  function CoBtn(coProps) {
+    var c = coProps.co; var urgent = coProps.urgent;
+    return React.createElement('div', {onClick:function(){setSel(c); setBuilt(null); setPreview(false);},
+      style:{background: sel&&sel.id===c.id?'var(--ac3)':'var(--bg2)', border:'1px solid ' + (sel&&sel.id===c.id?'rgba(59,111,255,.3)':'var(--br)'), borderRadius:9, padding:'9px 11px', cursor:'pointer', transition:'all .15s'}},
+      React.createElement('div', {style:{display:'flex', alignItems:'center', gap:8}},
+        React.createElement(Avatar, {av:c.av, color:c.color, size:24}),
+        React.createElement('div', {style:{flex:1, minWidth:0}},
+          React.createElement('div', {style:{fontSize:12, fontWeight:600, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, c.name),
+          React.createElement('div', {style:{fontSize:10, color: urgent?'var(--gn)':'var(--tx3)'}}, urgent ? (c.hasWebsite?'\uD83D\uDD27 Poor website — pitch rebuild':'\uD83C\uDF10 No website — prime target') : '\uD83C\uDF10 Has working website'))));
+  }
+
+  return React.createElement('div', {style:{display:'flex', height:'100%', overflow:'hidden'}},
+    React.createElement('div', {style:{width:260, minWidth:260, borderRight:'1px solid var(--br)', overflowY:'auto', padding:16}},
+      React.createElement('div', {style: label({marginBottom:8})}, '\uD83D\uDD25 Priority Targets'),
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5, marginBottom:18}},
+        targets.map(function(c) { return React.createElement(CoBtn, {key:c.id, co:c, urgent:true}); })),
+      others.length > 0 && React.createElement('div', null,
+        React.createElement('div', {style: label({marginBottom:8})}, 'Others'),
+        React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5}},
+          others.map(function(c) { return React.createElement(CoBtn, {key:c.id, co:c, urgent:false}); })))),
+    React.createElement('div', {style:{flex:1, display:'flex', flexDirection:'column', overflow:'hidden'}},
+      !sel
+        ? React.createElement('div', {style:{textAlign:'center', padding:'60px 20px', color:'var(--tx3)'}},
+            React.createElement('div', {style:{fontSize:36, opacity:.4, marginBottom:12}}, '\u2728'),
+            React.createElement('div', {style:{fontSize:15, color:'var(--tx2)', fontWeight:500}}, 'Select a company to build their website'))
+        : React.createElement('div', {style:{flex:1, display:'flex', flexDirection:'column', overflow:'hidden'}},
+            React.createElement('div', {style:{padding:'14px 20px', borderBottom:'1px solid var(--br)', background:'var(--bg2)', flexShrink:0}},
+              React.createElement('div', {style:{display:'flex', alignItems:'center', gap:12, marginBottom:12}},
+                React.createElement(Avatar, {av:sel.av, color:sel.color, size:34}),
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)'}}, sel.name),
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, sel.type + ' · ' + sel.suburb + (sel.hasWebsite ? ' · Current site grade: ' + sel.webGrade : ' · No website')))),
+              React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr 1fr auto', gap:10, alignItems:'end'}},
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:5}}, 'Design Style'),
+                  React.createElement('select', {value:style, onChange:function(e){setStyle(e.target.value);}, style:selSt},
+                    React.createElement('option', {value:'modern'}, 'Modern & Clean'),
+                    React.createElement('option', {value:'bold'}, 'Bold & Impactful'),
+                    React.createElement('option', {value:'elegant'}, 'Elegant & Premium'),
+                    React.createElement('option', {value:'local'}, 'Local & Friendly'),
+                    React.createElement('option', {value:'medical'}, 'Clinical & Trustworthy'))),
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:5}}, 'Colour Scheme'),
+                  React.createElement('select', {value:colorScheme, onChange:function(e){setColorScheme(e.target.value);}, style:selSt},
+                    React.createElement('option', {value:'professional'}, 'Professional Blue'),
+                    React.createElement('option', {value:'vibrant'}, 'Vibrant Coral'),
+                    React.createElement('option', {value:'natural'}, 'Natural Green'),
+                    React.createElement('option', {value:'dark'}, 'Dark & Bold'),
+                    React.createElement('option', {value:'warm'}, 'Warm & Inviting'))),
+                React.createElement('button', {onClick:build, disabled:building, style:{padding:'9px 16px', background: building?'var(--bg4)':'var(--ac)', border:'none', borderRadius:9, color: building?'var(--tx3)':'#fff', fontSize:13, fontWeight:600, cursor: building?'not-allowed':'pointer', fontFamily:'var(--fn)', display:'flex', alignItems:'center', justifyContent:'center', gap:8, whiteSpace:'nowrap'}},
+                  building ? [React.createElement('span', {key:'s', style:{animation:'spin 1s linear infinite', display:'inline-block'}}, '\u27f3'), ' Building...'] : '\u2728 Build Website'),
+                built && React.createElement('div', {style:{display:'flex', gap:5}},
+                  React.createElement('button', {onClick:function(){setPreview(!preview);}, style:{padding:'9px 12px', background: preview?'var(--ac4)':'var(--bg3)', border:'1px solid ' + (preview?'rgba(59,111,255,.3)':'var(--br2)'), borderRadius:8, color: preview?'var(--ac2)':'var(--tx2)', fontSize:12, cursor:'pointer', whiteSpace:'nowrap'}}, preview?'\uD83D\uDCCB Code':'\uD83D\uDC41\uFE0F Preview'),
+                  React.createElement('button', {onClick:copyCode, style:{padding:'9px 12px', background: copied?'var(--gn2)':'var(--bg3)', border:'1px solid ' + (copied?'var(--gn3)':'var(--br2)'), borderRadius:8, color: copied?'var(--gn)':'var(--tx2)', fontSize:12, cursor:'pointer'}}, copied?'\u2713':'Copy'),
+                  React.createElement('button', {onClick:downloadHtml, style:{padding:'9px 12px', background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:8, color:'var(--tx2)', fontSize:12, cursor:'pointer'}}, '\u2193 .html')))),
+            !built && !building && React.createElement('div', {style:{flex:1, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:10, color:'var(--tx3)'}},
+              React.createElement('div', {style:{fontSize:28, opacity:.4}}, '\uD83C\uDF10'),
+              React.createElement('div', {style:{fontSize:14, color:'var(--tx2)'}}, 'Configure options above and click Build Website')),
+            building && React.createElement('div', {style:{flex:1, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, color:'var(--tx3)'}},
+              React.createElement('div', {style:{fontSize:28, animation:'pulse 1.2s infinite'}},'\u2728'),
+              React.createElement('div', {style:{fontSize:14, color:'var(--ac2)', fontFamily:'var(--mo)'}}, 'Claude AI is building the website...'),
+              React.createElement('div', {style:{fontSize:12, color:'var(--tx3)'}}, 'Generating HTML, CSS, content & schema markup')),
+            built && !preview && React.createElement('div', {style:{flex:1, overflow:'auto', background:'#0d1117', padding:16}},
+              React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', color:'var(--gn)', marginBottom:10}}, '\u26A1 CLAUDE AI — GENERATED WEBSITE CODE (' + Math.round(built.length/1000) + 'kb)'),
+              React.createElement('pre', {style:{fontSize:11, color:'#a8b4c8', lineHeight:1.7, whiteSpace:'pre-wrap', fontFamily:'var(--mo)'}}, built)),
+            built && preview && React.createElement('iframe', {srcDoc:built, style:{flex:1, border:'none', background:'#fff'}, title:'Website Preview'}))));
+}
+
+function getMockWebsite(co, style, colorScheme) {
+  var colors = {professional:{bg:'#1a2744',accent:'#3b6fff',text:'#fff',light:'#f0f4ff'},vibrant:{bg:'#cc4444',accent:'#ff6b35',text:'#fff',light:'#fff5f0'},natural:{bg:'#2d4a3e',accent:'#4caf7d',text:'#fff',light:'#f0fff4'},dark:{bg:'#1a1a2e',accent:'#00b4d8',text:'#fff',light:'#e0f7ff'},warm:{bg:'#5c2018',accent:'#e07b39',text:'#fff',light:'#fff8f0'}};
+  var c = colors[colorScheme] || colors.professional;
+  return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<title>' + co.name + ' | ' + co.type + ' in ' + co.suburb + '</title>\n<meta name="description" content="' + co.type + ' in ' + co.suburb + '. ' + co.cats.join(', ') + '. Call ' + co.phone + '">\n<style>\n*{box-sizing:border-box;margin:0;padding:0}\nbody{font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#222}\n.hero{background:' + c.bg + ';color:' + c.text + ';padding:80px 20px;text-align:center}\n.hero h1{font-size:2.5rem;margin-bottom:16px;font-weight:800}\n.hero p{font-size:1.2rem;opacity:.85;margin-bottom:32px}\n.btn{display:inline-block;background:' + c.accent + ';color:#fff;padding:16px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:1.1rem}\nsection{padding:60px 20px;max-width:1100px;margin:0 auto}\nh2{font-size:2rem;margin-bottom:24px;color:' + c.bg + '}\n.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px}\n.card{background:' + c.light + ';border-radius:12px;padding:24px}\n.card h3{color:' + c.bg + ';margin-bottom:8px}\n.reviews{background:' + c.bg + ';color:' + c.text + ';padding:60px 20px;text-align:center}\n.review{background:rgba(255,255,255,.1);border-radius:8px;padding:20px;margin:10px}\n.stars{color:gold;font-size:1.3rem}\n.contact{background:#f8f9fa;padding:60px 20px;text-align:center}\nfooter{background:#222;color:#aaa;padding:20px;text-align:center}\n@media(max-width:600px){.hero h1{font-size:1.8rem}}\n</style>\n</head>\n<body>\n<nav style="background:' + c.bg + ';padding:15px 20px;display:flex;justify-content:space-between;align-items:center">\n<strong style="color:' + c.text + ';font-size:1.1rem">' + co.name + '</strong>\n<a href="tel:' + co.phone + '" style="background:' + c.accent + ';color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-weight:600">' + co.phone + '</a>\n</nav>\n<div class="hero">\n<h1>' + co.name + '</h1>\n<p>Trusted ' + co.type + ' in ' + co.suburb + ' since ' + co.founded + '</p>\n<a href="#contact" class="btn">' + (co.booking ? 'Book Online' : 'Contact Us') + '</a>\n</div>\n<section>\n<h2>Our Services</h2>\n<div class="grid">\n' + co.cats.map(function(c2) { return '<div class="card"><h3>'+c2+'</h3><p>Expert '+c2.toLowerCase()+' services delivered with care and professionalism.</p></div>'; }).join('\n') + '\n</div>\n</section>\n<section>\n<h2>Why Choose Us</h2>\n<div class="grid">\n<div class="card"><h3>\u2b50 '+co.rating+' Star Rating</h3><p>Rated by '+co.reviews+' satisfied clients in '+co.suburb+'.</p></div>\n<div class="card"><h3>\uD83C\uDFE0 Local & Trusted</h3><p>Proudly serving '+co.suburb+' and surrounds since '+co.founded+'.</p></div>\n<div class="card"><h3>\uD83D\uDCAF Professional Team</h3><p>Qualified, experienced and dedicated to your outcomes.</p></div>\n</div>\n</section>\n<div class="reviews">\n<h2 style="color:#fff;margin-bottom:24px">What Our Clients Say</h2>\n<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;max-width:900px;margin:0 auto">\n<div class="review"><div class="stars">\u2605\u2605\u2605\u2605\u2605</div><p style="margin:10px 0">Excellent service from start to finish. Highly recommend.</p><strong>Sarah M.</strong></div>\n<div class="review"><div class="stars">\u2605\u2605\u2605\u2605\u2605</div><p style="margin:10px 0">Professional, prompt and results were outstanding.</p><strong>James T.</strong></div>\n<div class="review"><div class="stars">\u2605\u2605\u2605\u2605\u2605</div><p style="margin:10px 0">Best '+co.type.toLowerCase()+' in '+co.suburb+'. Will definitely return.</p><strong>Emma R.</strong></div>\n</div>\n</div>\n<section id="contact" class="contact">\n<h2>Get In Touch</h2>\n<p style="font-size:1.1rem;margin-bottom:24px">'+co.address+'</p>\n<p style="font-size:1.2rem;margin-bottom:8px"><a href="tel:'+co.phone+'" style="color:'+c.bg+';font-weight:700">'+co.phone+'</a></p>\n<p><a href="mailto:'+co.email+'" style="color:'+c.bg+'">'+co.email+'</a></p>\n<br>\n<p style="color:#666">Hours: '+co.hours+'</p>\n</section>\n<footer>\n<p>&copy; '+new Date().getFullYear()+' '+co.name+'. All rights reserved. | '+co.suburb+', Sydney NSW</p>\n</footer>\n</body>\n</html>';
+}
+
+function CampaignsPage(props) {
+  var done = props.done;
+  var [sel, setSel] = useState(null);
+  var [platform, setPlatform] = useState('google');
+  var [budget, setBudget] = useState(1000);
+  var [goal, setGoal] = useState('leads');
+  var [building, setBuilding] = useState(false);
+  var [built, setBuilt] = useState(null);
+  var [saved, setSaved] = useState([]);
+
+  useEffect(function() {
+    if (props.campaignTarget) { setSel(props.campaignTarget.company); setPlatform(props.campaignTarget.platform); props.setCampaignTarget(null); }
+  }, [props.campaignTarget]);
+
+  if (!done) return React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'center', height:'100%', flexDirection:'column', gap:12, color:'var(--tx3)'}},
+    React.createElement('div', {style:{fontSize:36, opacity:.3}}, '\uD83D\uDCE3'),
+    React.createElement('div', {style:{fontSize:16, color:'var(--tx2)', fontWeight:500}}, 'No campaigns yet'));
+
+  function build() {
+    if (!sel || building) return;
+    setBuilding(true); setBuilt(null);
+    var gInfo = platform === 'google' ? ('Current Google: ' + (sel.gads ? ('Running (score ' + sel.gs + '/100)') : 'NOT running') + '\nDetected keywords: ' + (sel.gkw.length ? sel.gkw.join(', ') : 'none')) : ('Current Meta: ' + (sel.mads ? ('Running (score ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')') : 'NOT running'));
+    var prompt = 'You are an expert digital marketing strategist. Create a detailed ' + (platform==='google'?'Google Ads':'Meta Ads') + ' campaign plan.\n\nBusiness: ' + sel.name + '\nType: ' + sel.type + '\nLocation: ' + sel.suburb + ', Sydney NSW\nGoal: ' + goal + '\nMonthly budget: AUD $' + budget + '\nKey insight: ' + sel.insight + '\n' + gInfo + '\n\nRespond ONLY with valid JSON: {"campaignName":"name","objective":"objective","budgetSplit":"how to allocate","headlines":["3 ad headlines under 30 chars"],"descriptions":["2 descriptions under 90 chars"],"keywords":["6 target keywords"],"audiences":["3 audience segments"],"bidStrategy":"bid strategy","adSchedule":"schedule","estimatedResults":"30-day projection","quickWins":["2 first actions"]}';
+    var key = getApiKey();
+    fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model:'claude-sonnet-4-6-20250514', max_tokens:900, messages:[{role:'user', content:prompt}]})})
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) throw new Error(d.error.message);
+        var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
+        return JSON.parse(txt.replace(/```json|```/g, '').trim());
+      })
+      .then(function(parsed) { setBuilt(parsed); setSaved(function(prev) { return prev.concat([{id:Date.now(), co:sel, platform:platform, data:parsed}]); }); })
+      .catch(function() { var m = getMockCampaign(sel, platform, budget, goal); setBuilt(m); setSaved(function(prev) { return prev.concat([{id:Date.now(), co:sel, platform:platform, data:m}]); }); })
+      .finally(function() { setBuilding(false); });
+  }
+
+  var selSt = {width:'100%', background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:7, padding:'8px 11px', color:'var(--tx)', fontSize:13, fontFamily:'var(--fn)', outline:'none'};
+
+  return React.createElement('div', {style:{display:'flex', height:'100%', overflow:'hidden'}},
+    React.createElement('div', {style:{width:272, minWidth:272, borderRight:'1px solid var(--br)', overflowY:'auto', padding:16}},
+      React.createElement('div', {style: label({marginBottom:10})}, 'Select Company'),
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5, marginBottom:18}},
+        COMPANIES.map(function(co) {
+          return React.createElement('div', {key:co.id, onClick:function(){setSel(co); setBuilt(null);}, style:{background: sel&&sel.id===co.id?'var(--ac3)':'var(--bg2)', border:'1px solid ' + (sel&&sel.id===co.id?'rgba(59,111,255,.3)':'var(--br)'), borderRadius:8, padding:'9px 11px', cursor:'pointer', display:'flex', alignItems:'center', gap:8}},
+            React.createElement(Avatar, {av:co.av, color:co.color, size:24}),
+            React.createElement('div', {style:{fontSize:12, color:'var(--tx)', fontWeight:500}}, co.name));
+        })),
+      saved.length > 0 && React.createElement('div', null,
+        React.createElement('div', {style: label({marginBottom:8})}, 'Built Campaigns'),
+        React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5}},
+          saved.map(function(s) {
+            return React.createElement('div', {key:s.id, onClick:function(){setSel(s.co); setPlatform(s.platform); setBuilt(s.data);}, style:{background:'var(--bg2)', border:'1px solid var(--gn3)', borderRadius:8, padding:'9px 11px', cursor:'pointer'}},
+              React.createElement('div', {style:{fontSize:10, color:'var(--gn)', fontFamily:'var(--mo)', marginBottom:2}}, '\u2713 ' + (s.platform==='google'?'Google':'Meta')),
+              React.createElement('div', {style:{fontSize:11, color:'var(--tx2)'}}, s.co.name));
+          })))),
+    React.createElement('div', {style:{flex:1, overflowY:'auto', padding:20}},
+      !sel
+        ? React.createElement('div', {style:{textAlign:'center', padding:'60px 20px', color:'var(--tx3)'}}, React.createElement('div', {style:{fontSize:28, opacity:.4, marginBottom:12}}, '\uD83D\uDCE3'), React.createElement('div', {style:{fontSize:15, color:'var(--tx2)', fontWeight:500}}, 'Select a company to build a campaign'))
+        : React.createElement('div', {className:'fade-up'},
+            React.createElement('div', {style:card({padding:18, marginBottom:16})},
+              React.createElement('div', {style:{display:'flex', alignItems:'center', gap:10, marginBottom:16}},
+                React.createElement(Avatar, {av:sel.av, color:sel.color, size:38}),
+                React.createElement('div', null, React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)'}}, sel.name), React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, 'Build with Claude AI'))),
+              React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:14}},
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:6}}, 'Platform'),
+                  React.createElement('div', {style:{display:'flex', gap:5}},
+                    [['google','Google Ads'],['meta','Meta Ads']].map(function(pair) {
+                      return React.createElement('button', {key:pair[0], onClick:function(){setPlatform(pair[0]);}, style:{flex:1, padding:'8px 5px', fontSize:11, fontFamily:'var(--mo)', background: platform===pair[0]?'var(--ac4)':'var(--bg3)', border:'1px solid ' + (platform===pair[0]?'rgba(59,111,255,.3)':'var(--br)'), color: platform===pair[0]?'var(--ac2)':'var(--tx3)', borderRadius:7, cursor:'pointer'}}, pair[1]);
+                    }))),
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:6}}, 'Budget (AUD/mo)'),
+                  React.createElement('input', {type:'number', value:budget, onChange:function(e){setBudget(e.target.value);}, style:selSt})),
+                React.createElement('div', null,
+                  React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:6}}, 'Goal'),
+                  React.createElement('select', {value:goal, onChange:function(e){setGoal(e.target.value);}, style:selSt},
+                    React.createElement('option', {value:'leads'}, 'Lead Generation'),
+                    React.createElement('option', {value:'calls'}, 'Phone Calls'),
+                    React.createElement('option', {value:'bookings'}, 'Online Bookings'),
+                    React.createElement('option', {value:'awareness'}, 'Brand Awareness')))),
+              React.createElement('button', {onClick:build, disabled:building, style:{width:'100%', padding:11, background: building?'var(--bg4)':'var(--ac)', border:'none', borderRadius:9, color: building?'var(--tx3)':'#fff', fontSize:13, fontWeight:600, cursor: building?'not-allowed':'pointer', fontFamily:'var(--fn)', display:'flex', alignItems:'center', justifyContent:'center', gap:8}},
+                building ? [React.createElement('span', {key:'s', style:{animation:'spin 1s linear infinite', display:'inline-block'}}, '\u27f3'), ' Building Campaign with Claude AI...'] : '\uD83D\uDE80 Build ' + (platform==='google'?'Google Ads':'Meta Ads') + ' Campaign')),
+            built && React.createElement('div', {className:'fade-up', style:{display:'flex', flexDirection:'column', gap:12}},
+              React.createElement('div', {style:card({padding:18, border:'1px solid rgba(59,111,255,.22)'})},
+                React.createElement('div', {style:{fontSize:11, color:'var(--ac2)', fontFamily:'var(--mo)', marginBottom:12}}, '\u26a1 CLAUDE AI - CAMPAIGN BLUEPRINT'),
+                React.createElement('div', {style:{fontSize:18, fontWeight:700, color:'var(--tx)', marginBottom:3}}, built.campaignName),
+                React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', marginBottom:16}}, built.objective),
+                React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}},
+                  [{t:'Budget Split',v:built.budgetSplit,hi:false},{t:'Bid Strategy',v:built.bidStrategy,hi:false},{t:'Ad Schedule',v:built.adSchedule,hi:false},{t:'Expected Results (30 days)',v:built.estimatedResults,hi:true}].map(function(item) {
+                    return React.createElement('div', {key:item.t, style:{background: item.hi?'var(--gn2)':'var(--bg3)', border:'1px solid ' + (item.hi?'var(--gn3)':'var(--br)'), borderRadius:8, padding:12}},
+                      React.createElement('div', {style:{fontSize:10, color: item.hi?'var(--gn)':'var(--tx3)', fontFamily:'var(--mo)', marginBottom:5}}, item.t),
+                      React.createElement('div', {style:{fontSize:12, color: item.hi?'var(--gn)':'var(--tx2)', lineHeight:1.5}}, item.v));
+                  }))),
+              built.headlines && React.createElement('div', {style:card({padding:16})},
+                React.createElement('div', {style: label()}, 'Ad Copy'),
+                React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:5, marginBottom:10}},
+                  (built.headlines || []).map(function(h, i) {
+                    return React.createElement('div', {key:i, style:{background:'var(--bg3)', borderRadius:7, padding:'8px 12px', fontSize:13, color: platform==='google'?'#8ab4f8':'#7da8ff', fontWeight:600}}, h);
+                  })),
+                (built.descriptions || []).map(function(d, i) {
+                  return React.createElement('div', {key:i, style:{background:'var(--bg3)', borderRadius:7, padding:'8px 12px', fontSize:12, color:'var(--tx2)', marginBottom:5, lineHeight:1.5}}, d);
+                })),
+              built.keywords && built.keywords.length > 0 && React.createElement('div', {style:card({padding:16})},
+                React.createElement('div', {style: label()}, 'Target Keywords'),
+                React.createElement('div', {style:{display:'flex', gap:6, flexWrap:'wrap'}},
+                  (built.keywords || []).map(function(kw, i) {
+                    return React.createElement('span', {key:i, style:{fontSize:12, background:'var(--ac3)', border:'1px solid rgba(59,111,255,.2)', borderRadius:20, padding:'4px 11px', color:'var(--ac2)', fontFamily:'var(--mo)'}}, kw);
+                  }))),
+              built.quickWins && React.createElement('div', {style:{background:'var(--gn2)', border:'1px solid var(--gn3)', borderRadius:12, padding:16}},
+                React.createElement('div', {style: label({color:'var(--gn)', marginBottom:10})}, '\u26a1 Quick Wins - Do These First'),
+                (built.quickWins || []).map(function(w, i) {
+                  return React.createElement('div', {key:i, style:{display:'flex', gap:8, fontSize:13, color:'var(--tx2)', marginBottom:7}},
+                    React.createElement('span', {style:{color:'var(--gn)', fontWeight:700, flexShrink:0}}, (i+1) + '.'),
+                    w);
+                }))))));
+}
+
+function getMockCampaign(co, platform, budget, goal) {
+  return {
+    campaignName: co.name + ' - ' + (platform==='google'?'Google Search':'Meta Lead Gen') + ' Q2 2025',
+    objective: (goal==='leads'?'Generate patient enquiries':goal==='calls'?'Drive phone calls':'Increase online bookings') + ' for ' + co.name,
+    budgetSplit: '$' + Math.round(budget*.7) + '/mo search + $' + Math.round(budget*.3) + '/mo ' + (platform==='google'?'display retargeting':'Instagram Stories'),
+    bidStrategy: goal==='leads' ? 'Target CPA - $40-55 per lead' : 'Maximise conversions with 4x ROAS target',
+    adSchedule: 'Mon-Fri 7am-8pm, Sat 8am-3pm (peak booking hours)',
+    estimatedResults: '~' + Math.round(budget/48) + ' leads/month at $' + Math.round(budget / Math.round(budget/48)) + ' CPL based on local benchmarks',
+    headlines: [co.type + ' ' + co.suburb, 'Book Online - Same Day', '\u2605 ' + co.rating + ' \u00b7 ' + co.reviews + ' Reviews'],
+    descriptions: ['Trusted ' + co.type.toLowerCase() + ' in ' + co.suburb + '. All health funds. Easy online booking.', 'New patients welcome. Experienced team. Pain-free care guaranteed.'],
+    keywords: [co.cats[0].toLowerCase() + ' ' + co.suburb.toLowerCase(), 'dentist near me', co.suburb.toLowerCase() + ' dental clinic', 'book dentist online', 'emergency dentist ' + co.suburb.toLowerCase(), 'best dentist sydney'],
+    audiences: ['Active searchers - local dental intent', 'Website retargeting - 30-day visitors', 'Lookalike audience based on existing patients'],
+    quickWins: ['Create a dedicated landing page for ' + co.cats[0] + ' with a single clear booking CTA', 'Set up call tracking to measure phone leads separately from form fills']
+  };
+}
+
+// ─── AGENTS PAGE ──────────────────────────────────────────────────────────────
+
+function AgentsPage(props) {
+  var done = props.done;
+  return React.createElement('div', {style:{padding:20, overflowY:'auto', height:'100%'}},
+    React.createElement('div', {style:card({padding:'14px 18px', marginBottom:18, display:'flex', gap:24})},
+      [{label:'Total agents',val:String(AGENT_LIST.length),color:'var(--ac)'},{label:'Status',val:done?'Ready':'Standby',color:done?'var(--gn)':'var(--tx3)'},{label:'Architecture',val:'Sequential',color:'var(--am)'},{label:'AI Model',val:'Claude claude-sonnet-4-20250514',color:'var(--pu)'}].map(function(x) {
+        return React.createElement('div', {key:x.label},
+          React.createElement('div', {style:{fontSize:20, fontWeight:700, fontFamily:'var(--mo)', color:x.color, marginBottom:2}}, x.val),
+          React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, x.label));
+      })),
+    React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:16}},
+      AGENT_LIST.map(function(ag, i) {
+        return React.createElement('div', {key:ag.id, className:'fade-up', style:{animationDelay: (i*60) + 'ms', background:'var(--bg2)', border:'1px solid ' + (done ? ag.color + '22' : 'var(--br)'), borderRadius:12, padding:18}},
+          React.createElement('div', {style:{display:'flex', alignItems:'flex-start', gap:12, marginBottom:12}},
+            React.createElement('div', {style:{fontSize:26, flexShrink:0}}, i===0?'\uD83D\uDDFA\uFE0F':i===1?'\uD83D\uDCCD':i===2?'\uD83D\uDD0E':i===3?'\uD83D\uDCCA':i===4?'\uD83C\uDF10':i===5?'\uD83C\uDFE2':'\u26a1'),
+            React.createElement('div', {style:{flex:1}},
+              React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)', marginBottom:2}}, ag.name),
+              React.createElement('div', {style:{display:'flex', alignItems:'center', gap:5}},
+                React.createElement('div', {style:{width:6, height:6, borderRadius:'50%', background: done?'var(--gn)':'var(--tx3)'}}),
+                React.createElement('span', {style:{fontSize:10, fontFamily:'var(--mo)', color: done?'var(--gn)':'var(--tx3)'}}, done?'READY':'STANDBY'),
+                React.createElement('span', {style:{fontSize:10, color:'var(--tx3)', marginLeft:6}}, 'avg ' + ag.time)))),
+          React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.7, marginBottom:12}}, ag.desc),
+          React.createElement('div', {style:{marginBottom:10}},
+            React.createElement('div', {style: label({marginBottom:6})}, 'TECH STACK'),
+            React.createElement('div', {style:{display:'flex', gap:4, flexWrap:'wrap'}},
+              ag.tech.map(function(t) {
+                return React.createElement('span', {key:t, style:{fontSize:10, fontFamily:'var(--mo)', background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:4, padding:'2px 7px', color:'var(--tx3)'}}, t);
+              }))),
+          React.createElement('div', null,
+            React.createElement('div', {style: label({marginBottom:6})}, 'OUTPUT FIELDS'),
+            React.createElement('div', {style:{display:'flex', gap:4, flexWrap:'wrap'}},
+              ag.out.map(function(f) {
+                return React.createElement('span', {key:f, style:{fontSize:10, fontFamily:'var(--mo)', background:ag.cbg, border:'1px solid ' + ag.color + '22', borderRadius:4, padding:'2px 7px', color:ag.color}}, f);
+              }))));
+      })),
+    React.createElement('div', {style:card({padding:18})},
+      React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)', marginBottom:14}}, 'Pipeline Architecture'),
+      React.createElement('div', {style:{display:'flex', borderRadius:8, border:'1px solid var(--br)', overflow:'hidden'}},
+        AGENT_LIST.map(function(ag, i) {
+          return React.createElement('div', {key:ag.id, style:{flex:1, padding:'10px 6px', background:'var(--bg3)', textAlign:'center', borderRight: i < AGENT_LIST.length-1 ? '1px solid var(--br)' : 'none'}},
+            React.createElement('div', {style:{fontSize:14, marginBottom:3}}, i===0?'\uD83D\uDDFA\uFE0F':i===1?'\uD83D\uDCCD':i===2?'\uD83D\uDD0E':i===3?'\uD83D\uDCCA':i===4?'\uD83C\uDF10':i===5?'\uD83C\uDFE2':'\u26a1'),
+            React.createElement('div', {style:{fontSize:9, fontFamily:'var(--mo)', color:ag.color}}, ag.short));
+        })),
+      React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginTop:10, lineHeight:1.6}}, 'Agents run sequentially, each feeding enriched data to the next. Output from Maps Scout and GMB Extractor is passed to both ad agents simultaneously, then synthesised by Profile Builder with Claude AI before the Opportunity Scorer ranks all results.')));
+}
+
+// ─── SETTINGS PAGE ────────────────────────────────────────────────────────────
+
+function SettingsPage() {
+  var [saved, setSaved] = useState(false);
+  var [autoScore, setAutoScore] = useState(true);
+  var [notify, setNotify] = useState(true);
+  var [maxP, setMaxP] = useState(8);
+  var [anthropicKey, setAnthropicKey] = useState(getApiKey());
+  var iSt = {width:'100%', background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:8, padding:'9px 12px', color:'var(--tx)', fontSize:13, fontFamily:'var(--mo)', outline:'none'};
+  function Sec(secProps) {
+    return React.createElement('div', {style:card({padding:18, marginBottom:14})},
+      React.createElement('div', {style:{fontSize:12, fontWeight:600, color:'var(--tx)', marginBottom:14, paddingBottom:10, borderBottom:'1px solid var(--br)'}}, secProps.title),
+      React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:14}}, secProps.children));
+  }
+  function Fld(fldProps) {
+    return React.createElement('div', null,
+      React.createElement('div', {style:{fontSize:12, color:'var(--tx)', marginBottom:3, fontWeight:500}}, fldProps.label),
+      fldProps.hint && React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:7}}, fldProps.hint),
+      fldProps.children);
+  }
+  return React.createElement('div', {style:{padding:20, overflowY:'auto', height:'100%', maxWidth:680}},
+    React.createElement(Sec, {title:'API Configuration'},
+      React.createElement(Fld, {label:'Anthropic API Key', hint:'Used for Profile Builder, Outreach and Campaign generation'}, React.createElement('input', {type:'password', placeholder:'sk-ant-api03-...', value:anthropicKey, onChange:function(e){setAnthropicKey(e.target.value);}, style:iSt})),
+      React.createElement(Fld, {label:'Google Maps API Key', hint:'Required for Maps Scout agent - enables location search'}, React.createElement('input', {type:'password', placeholder:'AIza...', style:iSt})),
+      React.createElement(Fld, {label:'Meta Ad Library API', hint:'Server-side connector. Set META_ACCESS_TOKEN before starting server.js; do not paste production tokens into the browser.'}, React.createElement('input', {type:'text', value:'Backend env: META_ACCESS_TOKEN', readOnly:true, style:iSt}))),
+    React.createElement(Sec, {title:'Connector Configuration'},
+      React.createElement(Fld, {label:'Meta API coverage', hint:'Official API verifies political/social-issue ads globally and broader commercial ads for UK/EU delivery. Other markets keep public-library/manual verification fallback.'},
+        React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.6, background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:8, padding:'10px 12px'}}, 'Current scan labels Meta as VERIFIED only after the backend returns a successful API response. Otherwise results remain ESTIMATED.'))),
+    React.createElement(Sec, {title:'Scraping Configuration'},
+      React.createElement(Fld, {label:'Max map result pages to scan', hint:'More pages = more leads but longer run time (1-20)'},
+        React.createElement('div', {style:{display:'flex', alignItems:'center', gap:12}},
+          React.createElement('input', {type:'range', min:1, max:20, value:maxP, onChange:function(e){setMaxP(Number(e.target.value));}, style:{flex:1}}),
+          React.createElement('span', {style:{fontFamily:'var(--mo)', fontSize:14, color:'var(--tx)', minWidth:24}}, maxP))),
+      React.createElement(Fld, {label:'Auto-score leads after scrape', hint:'Automatically runs Opportunity Scorer when pipeline completes'}, React.createElement(Toggle, {value:autoScore, onChange:setAutoScore})),
+      React.createElement(Fld, {label:'Alert on high-priority leads', hint:'Show notifications for leads scoring 80 or above'}, React.createElement(Toggle, {value:notify, onChange:setNotify}))),
+    React.createElement(Sec, {title:'About LeadScout AI'},
+      [['Version','3.0.0'],['Agent pipeline',AGENT_LIST.length + ' micro-agents (sequential)'],['AI model','Claude claude-sonnet-4-20250514'],['Data sources','Google Maps \u00b7 GMB \u00b7 Google Ads Transparency \u00b7 Meta Ad Library']].map(function(pair) {
+        return React.createElement('div', {key:pair[0], style:{display:'flex', justifyContent:'space-between', fontSize:12, padding:'6px 0', borderBottom:'1px solid var(--br)'}},
+          React.createElement('span', {style:{color:'var(--tx3)'}}, pair[0]),
+          React.createElement('span', {style:{color:'var(--tx2)', fontFamily:'var(--mo)', fontSize:11}}, pair[1]));
+      })),
+    React.createElement('button', {onClick:function(){ setApiKey(anthropicKey); setSaved(true); setTimeout(function(){setSaved(false);},2000); }, style:{padding:'11px 28px', background: saved?'var(--gn)':'var(--ac)', border:'none', borderRadius:9, color:'#fff', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:'var(--fn)', transition:'all .2s'}}, saved ? '\u2713 Settings Saved' : 'Save Settings'));
+}
+
+// ─── ROOT APP ─────────────────────────────────────────────────────────────────
+
+var PAGE_META = {
+  search:      ['Search & Scout',    'Multi-agent lead intelligence pipeline'],
+  profiles:    ['Company Profiles',  'All scraped and profiled businesses'],
+  adIntel:     ['Ad Intelligence',   'Google Ads & Meta Ads analysis'],
+  webIntel:    ['Website Intel',     'Website quality audit & gap analysis'],
+  campaigns:   ['Campaign Builder',  'AI-powered campaign generation'],
+  outreach:    ['Outreach Queue',    'AI-generated outreach messages'],
+  webBuilder:  ['Website Builder',   'Build client websites with Claude AI'],
+  agents:      ['Agent Monitor',     'Real-time agent status & configuration'],
+  settings:    ['Settings',          'API keys and scraping preferences'],
+};
+
+function App() {
+  var [view, setView] = useState('search');
+  var [done, setDone] = useState(false);
+  var [running, setRunning] = useState(false);
+  var [emailTarget, setEmailTarget] = useState(null);
+  var [campaignTarget, setCampaignTarget] = useState(null);
+  var [websiteTarget, setWebsiteTarget] = useState(null);
+  var [sidebarOpen, setSidebarOpen] = useState(false);
+  var [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(function() {
+    function onResize() {
+      var mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(false);
+    }
+    window.addEventListener('resize', onResize);
+    return function() { window.removeEventListener('resize', onResize); };
+  }, []);
+
+  function onEmail(co) { setEmailTarget(co); setView('outreach'); }
+  function onCampaign(co, platform) { setCampaignTarget({company:co, platform:platform}); setView('campaigns'); }
+  function onBuildWebsite(co) { setWebsiteTarget(co); setView('webBuilder'); }
+  function onStart() { setRunning(true); }
+  function onDone() { setDone(true); setRunning(false); }
+
+  var meta = PAGE_META[view] || ['LeadScout', ''];
+
+  return React.createElement('div', {style:{display:'flex', height:'100vh', overflow:'hidden', background:'var(--bg)'}},
+    React.createElement(Sidebar, {view:view, setView:setView, done:done, running:running,
+      isMobile:isMobile, open:sidebarOpen, onClose:function(){setSidebarOpen(false);}}),
+    React.createElement('div', {style:{marginLeft: isMobile ? 0 : 228, flex:1, display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden'}},
+      React.createElement('div', {style:{height:52, minHeight:52, background:'var(--bg2)', borderBottom:'1px solid var(--br)', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 16px', flexShrink:0}},
+        React.createElement('div', {style:{display:'flex', alignItems:'center', gap:10}},
+          isMobile && React.createElement('button', {
+            onClick: function(){ setSidebarOpen(true); },
+            style:{background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:7, width:34, height:34,
+              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+              gap:5, cursor:'pointer', flexShrink:0, padding:8}},
+            React.createElement('span', {style:{display:'block', width:16, height:2, background:'var(--tx2)', borderRadius:1}}),
+            React.createElement('span', {style:{display:'block', width:16, height:2, background:'var(--tx2)', borderRadius:1}}),
+            React.createElement('span', {style:{display:'block', width:16, height:2, background:'var(--tx2)', borderRadius:1}})),
+          React.createElement('div', null,
+            React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)', lineHeight:1.2}}, meta[0]),
+            React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', fontFamily:'var(--mo)'}}, meta[1]))),
+        React.createElement('div', {style:{display:'flex', alignItems:'center', gap:10}},
+          done && React.createElement('div', {style:{fontSize:11, fontFamily:'var(--mo)', color:'var(--gn)', background:'var(--gn2)', border:'1px solid var(--gn3)', borderRadius:20, padding:'3px 10px', whiteSpace:'nowrap'}}, '\u25cf ' + (isMobile ? 'Ready' : COMPANIES.length + ' companies profiled')),
+          React.createElement('div', {style:{width:30, height:30, borderRadius:'50%', background:'var(--ac)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color:'#fff', flexShrink:0}}, 'U'))),
+      React.createElement('div', {style:{flex:1, overflow:'hidden'}},
+        view === 'search'     && React.createElement(SearchPage,        {onDone:onDone, onStart:onStart, onEmail:onEmail, onCampaign:onCampaign, onBuildWebsite:onBuildWebsite}),
+        view === 'profiles'   && React.createElement(ProfilesPage,     {done:done, onEmail:onEmail, onCampaign:onCampaign, onBuildWebsite:onBuildWebsite}),
+        view === 'adIntel'    && React.createElement(AdIntelPage,      {done:done}),
+        view === 'webIntel'   && React.createElement(WebIntelPage,     {done:done, onEmail:onEmail, onCampaign:onCampaign, onBuildWebsite:onBuildWebsite}),
+        view === 'campaigns'  && React.createElement(CampaignsPage,    {done:done, campaignTarget:campaignTarget, setCampaignTarget:setCampaignTarget}),
+        view === 'outreach'   && React.createElement(OutreachPage,     {done:done, emailTarget:emailTarget, setEmailTarget:setEmailTarget}),
+        view === 'webBuilder' && React.createElement(WebsiteBuilderPage,{done:done, websiteTarget:websiteTarget, setWebsiteTarget:setWebsiteTarget}),
+        view === 'agents'     && React.createElement(AgentsPage,       {done:done}),
+        view === 'settings'   && React.createElement(SettingsPage,     {}))));
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+
+</script>
+</body>
+</html>
