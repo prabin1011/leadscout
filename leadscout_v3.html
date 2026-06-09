@@ -59,25 +59,25 @@ function setApiKey(k) { _apiKey = k; }
 
 const AGENT_LIST = [
   {id:'maps',   name:'Maps Scout',        short:'Maps',    icon:'MAP', color:'#22d3ee', cbg:'rgba(34,211,238,.1)',
-   desc:'Crawls Google Maps across all result pages for the keyword+location query. Extracts business names, addresses, phones, ratings, review counts, websites and map rankings.',
-   tech:['Playwright','Google Maps','Pagination Handler','DOM Parser'], out:['name','address','phone','rating','reviews','mapsRank'], time:'12-18s'},
+   desc:'Queries Google Places API (New) Text Search through the protected backend. Returns real business names, locations, contact fields, ratings, websites and Google Maps links.',
+   tech:['Places API (New)','Text Search','Field Mask','Rate Limiter'], out:['name','address','phone','rating','reviews','mapsUrl'], time:'1-4s'},
   {id:'gmb',    name:'GMB Extractor',     short:'GMB',     icon:'PIN', color:'#f5a623', cbg:'rgba(245,166,35,.1)',
-   desc:'Deep-parses Google Business Profiles. Extracts hours, categories, service menus, Q&A, photos, booking integrations and post history.',
-   tech:['GMB API','Schema.org Parser','Structured Data','GBP Enricher'], out:['hours','categories','services','bookingUrl'], time:'8-14s'},
+   desc:'Uses contact, category, status and opening-hour fields returned by Google Places. It does not scrape private Business Profile administration data.',
+   tech:['Google Places Fields','Business Status','Opening Hours'], out:['hours','categories','businessStatus'], time:'included'},
   {id:'gads',   name:'Google Ads Agent',  short:'G.Ads',   icon:'SRC', color:'#3b6fff', cbg:'rgba(59,111,255,.1)',
-   desc:'Queries Google Ads Transparency Center for each discovered domain. Extracts live ad copy, keyword signals, spend tier estimates and ad strength scores.',
-   tech:['Ads Transparency API','Domain Matcher','NLP Extractor','Spend Estimator'], out:['adCopy','headlines','keywords','spendTier'], time:'10-16s'},
+   desc:'Produces estimated ad signals and opens Google Ads Transparency Center for manual verification. No general live Transparency Center connector is configured.',
+   tech:['Manual Verification','Domain Link','Estimated Signals'], out:['estimatedPresence','verificationUrl'], time:'estimated'},
   {id:'meta',   name:'Meta Ads Agent',    short:'Meta',    icon:'GRF', color:'#a855f7', cbg:'rgba(168,85,247,.1)',
-   desc:'Queries the Meta Ad Library for each business. Extracts active creatives, campaign objectives, targeting signals and ad duration for fatigue detection.',
-   tech:['Meta Ad Library API','Creative Analyzer','CV Model','Fatigue Detector'], out:['creatives','objective','targeting','duration'], time:'9-15s'},
+   desc:'Uses the official Meta Ad Library API when a server token and supported coverage are available, with public-library links as the broader commercial-ad fallback.',
+   tech:['Meta Ad Library API','Coverage Check','Public Library Fallback'], out:['verifiedAds','pageName','snapshotUrl'], time:'API dependent'},
   {id:'profile',name:'Profile Builder',   short:'Profile', icon:'BLD', color:'#00cc7a', cbg:'rgba(0,204,122,.1)',
-   desc:'Uses Claude AI to synthesise all collected signals into a structured company profile with opportunity analysis, ad gap scoring and outreach recommendations.',
-   tech:['Claude claude-sonnet-4-20250514','RAG Pipeline','Prompt Chain','Data Synthesiser'], out:['profile','opportunities','score'], time:'6-10s'},
+   desc:'Builds a local structured profile from verified Places fields and clearly marked estimates. AI generation is only used by separate tools when an API key is configured.',
+   tech:['Local Data Mapping','Source Labels','Optional Claude'], out:['profile','sources','opportunities'], time:'local'},
   {id:'web',    name:'Website Auditor',  short:'Web',     icon:'WEB', color:'#22d3ee', cbg:'rgba(34,211,238,.1)',
-   desc:'Checks each discovered domain for existence, runs PageSpeed/Lighthouse analysis, detects HTTPS, mobile-friendliness, tech stack and scores website quality 0-100.',
-   tech:['PageSpeed API','Lighthouse','SSL Check','Wappalyzer'], out:['hasWebsite','webScore','webGrade','webIssues'], time:'8-14s'},
+   desc:'Uses website presence from Google Places and currently estimates quality signals. PageSpeed, SSL and mobile-test links are provided for real verification.',
+   tech:['Places Website Field','Estimated Score','Verification Links'], out:['hasWebsite','estimatedGrade','verificationUrls'], time:'estimated'},
   {id:'scorer', name:'Opportunity Scorer',short:'Scorer',  icon:'ZAP', color:'#f472b6', cbg:'rgba(244,114,182,.1)',
-   desc:'Scores each lead 0-100 based on ad gap, website quality, market position, review sentiment and keyword opportunity. Ranks the full pipeline.',
+   desc:'Calculates an estimated local score from verified Places data plus clearly labeled ad and website assumptions. It is a prioritization aid, not a verified performance metric.',
    tech:['Weighted Scoring','Sentiment NLP','Market Signals','ML Ranker'], out:['opportunityScore','rank','priority'], time:'3-5s'},
 ];
 
@@ -326,6 +326,73 @@ function generateCompanies(kw, loc, count) {
   return result;
 }
 
+function companiesFromGooglePlaces(places, kw, loc) {
+  var seeds = generateCompanies(kw, loc, Math.max(places.length, 4));
+  return places.map(function(place, i) {
+    var seed = seeds[i];
+    var displayName = place.displayName && place.displayName.text ? place.displayName.text : 'Unnamed business';
+    var typeName = place.primaryTypeDisplayName && place.primaryTypeDisplayName.text
+      ? place.primaryTypeDisplayName.text
+      : (place.primaryType || 'Business').replace(/_/g, ' ');
+    var website = place.websiteUri ? place.websiteUri.replace(/^https?:\/\//, '').replace(/\/$/, '') : '';
+    var opening = place.regularOpeningHours && place.regularOpeningHours.weekdayDescriptions
+      ? place.regularOpeningHours.weekdayDescriptions.join(' · ')
+      : 'Not provided';
+    var rating = Number(place.rating || 0);
+    var reviews = Number(place.userRatingCount || 0);
+    var words = displayName.split(/\s+/).filter(function(w) { return w.length > 0; });
+    var avatar = words.length > 1 ? (words[0][0] + words[1][0]).toUpperCase() : displayName.slice(0, 2).toUpperCase();
+    var categories = [typeName];
+    if (place.primaryType && typeName.toLowerCase() !== place.primaryType.replace(/_/g, ' ').toLowerCase()) {
+      categories.push(place.primaryType.replace(/_/g, ' '));
+    }
+
+    return Object.assign({}, seed, {
+      id: place.id || 'google-' + i,
+      placeId: place.id || '',
+      name: displayName,
+      av: avatar,
+      type: typeName,
+      suburb: loc,
+      city: loc,
+      rating: rating,
+      reviews: reviews,
+      phone: place.nationalPhoneNumber || 'Not provided',
+      website: website,
+      email: 'Not provided',
+      address: place.formattedAddress || 'Address not provided',
+      employees: 'Unknown',
+      founded: 'Unknown',
+      cats: categories,
+      hours: opening,
+      booking: false,
+      rank: i + 1,
+      visits: reviews ? Math.round(reviews * 4) : 0,
+      hasWebsite: Boolean(website),
+      webScore: website ? seed.webScore : 0,
+      webGrade: website ? seed.webGrade : 'none',
+      webPerf: website ? seed.webPerf : 0,
+      webSeo: website ? seed.webSeo : 0,
+      webAccess: website ? seed.webAccess : 0,
+      webBest: website ? seed.webBest : 0,
+      webMobile: website ? seed.webMobile : false,
+      webHttps: website ? /^https:\/\//.test(place.websiteUri || '') : false,
+      webTech: [],
+      webIssues: website ? seed.webIssues : [],
+      latitude: place.location ? place.location.latitude : null,
+      longitude: place.location ? place.location.longitude : null,
+      googleMapsUri: place.googleMapsUri || '',
+      businessStatus: place.businessStatus || 'BUSINESS_STATUS_UNSPECIFIED',
+      mapsSource: 'verified',
+      gmbSource: 'google_places',
+      googleSource: 'estimated',
+      metaSource: 'estimated',
+      websiteSource: website ? 'google_places_presence' : 'google_places_no_website',
+      scoreSource: 'estimated'
+    });
+  });
+}
+
 function getLogs(kw, loc, count) {
   var n = count || 12;
   var rawN = Math.round(n * 2.2);
@@ -334,26 +401,18 @@ function getLogs(kw, loc, count) {
   var spend = Math.round(n * 1250);
   return {
     maps: [
-      {t:'info',    m:'[MAPS SCOUT] Initialising crawler for "' + kw + ' ' + loc + '"...'},
-      {t:'agent',   m:'[MAPS SCOUT] Launching headless Chromium browser... done'},
-      {t:'agent',   m:'[MAPS SCOUT] Fetching page 1 of map results...'},
-      {t:'agent',   m:'[MAPS SCOUT] ' + Math.round(n*0.7) + ' listings found on page 1, continuing...'},
-      {t:'agent',   m:'[MAPS SCOUT] Pages 2-4 complete. ' + Math.round(n*1.5) + ' additional listings found'},
-      {t:'success', m:'[MAPS SCOUT] ' + rawN + ' raw listings extracted - deduplicating...'},
-      {t:'success', m:'[MAPS SCOUT] ' + n + ' unique businesses confirmed with full contact data'},
+      {t:'info',    m:'[MAPS SCOUT] Querying Google Places API (New) for "' + kw + ' in ' + loc + '"...'},
+      {t:'success', m:'[MAPS SCOUT] ' + n + ' real Google Places records returned.'},
     ],
     gmb: [
-      {t:'info',    m:'[GMB EXTRACTOR] Starting Business Profile enrichment...'},
-      {t:'agent',   m:'[GMB EXTRACTOR] Fetching structured data for ' + n + ' businesses...'},
-      {t:'agent',   m:'[GMB EXTRACTOR] Parsing hours, categories, service menus...'},
-      {t:'success', m:'[GMB EXTRACTOR] All ' + n + ' profiles enriched with full GMB data'},
+      {t:'info',    m:'[PLACES DETAILS] Mapping Google contact, category and opening-hour fields...'},
+      {t:'success', m:'[PLACES DETAILS] ' + n + ' business records mapped. Missing fields remain "Not provided".'},
     ],
     gads: [
-      {t:'info',    m:'[GOOGLE ADS] Querying Ads Transparency Center for ' + n + ' domains...'},
-      {t:'agent',   m:'[GOOGLE ADS] Matching domains to advertiser accounts...'},
-      {t:'agent',   m:'[GOOGLE ADS] Auction signals detected for ' + Math.round(n*0.45) + ' domains — flagging as estimated active'},
+      {t:'info',    m:'[GOOGLE ADS] Generating estimated signals for ' + n + ' domains...'},
+      {t:'agent',   m:'[GOOGLE ADS] Estimated presence detected for ' + Math.round(n*0.45) + ' domains.'},
       {t:'warn',    m:'[GOOGLE ADS] NOTE: Verify each domain at adstransparency.google.com for confirmed status'},
-      {t:'success', m:'[GOOGLE ADS] Estimated ad signals captured — click "Verify \u2197" in each profile to confirm'},
+      {t:'success', m:'[GOOGLE ADS] Estimates ready. No live Google Ads API data was used.'},
     ],
     meta: [
       {t:'info',    m:'[META ADS] Connecting to Meta Ad Library API...'},
@@ -364,24 +423,20 @@ function getLogs(kw, loc, count) {
       {t:'success', m:'[META ADS] Estimated Meta signals complete — verify live data per company'},
     ],
     profile: [
-      {t:'info',    m:'[PROFILE BUILDER] Sending enriched data to Claude claude-sonnet-4-20250514...'},
-      {t:'agent',   m:'[PROFILE BUILDER] Synthesising ' + n + ' company profiles...'},
-      {t:'agent',   m:'[PROFILE BUILDER] Generating opportunity analysis and ad gap scores...'},
-      {t:'success', m:'[PROFILE BUILDER] ' + n + ' full company profiles built with AI insights'},
+      {t:'info',    m:'[PROFILE BUILDER] Structuring ' + n + ' company profiles locally...'},
+      {t:'agent',   m:'[PROFILE BUILDER] Combining verified Places fields with labeled estimates...'},
+      {t:'success', m:'[PROFILE BUILDER] ' + n + ' local profiles built. No model call was made.'},
     ],
     web: [
-      {t:'info',    m:'[WEB AUDITOR] Scanning websites for all ' + n + ' businesses...'},
-      {t:'agent',   m:'[WEB AUDITOR] Checking domain registration and HTTPS status...'},
-      {t:'warn',    m:'[WEB AUDITOR] ' + Math.round(n*0.25) + ' businesses have NO website detected'},
-      {t:'agent',   m:'[WEB AUDITOR] Running PageSpeed/Lighthouse analysis on ' + Math.round(n*0.75) + ' sites...'},
-      {t:'agent',   m:'[WEB AUDITOR] Checking mobile responsiveness, SEO meta tags, accessibility...'},
-      {t:'success', m:'[WEB AUDITOR] Website grades: ' + Math.round(n*0.12) + ' A-grade, ' + Math.round(n*0.18) + ' B, ' + Math.round(n*0.22) + ' C/D/F, ' + Math.round(n*0.25) + ' none'},
+      {t:'info',    m:'[WEB AUDITOR] Reading website-presence fields returned by Google Places...'},
+      {t:'warn',    m:'[WEB AUDITOR] Quality grades remain estimates until PageSpeed/Lighthouse is connected.'},
+      {t:'success', m:'[WEB AUDITOR] Verification links prepared for available websites.'},
     ],
     scorer: [
       {t:'info',    m:'[OPP SCORER] Running weighted lead scoring model...'},
       {t:'agent',   m:'[OPP SCORER] Factoring: ad gaps, spend, reviews, website quality, market position...'},
       {t:'success', m:'[OPP SCORER] ' + hiN + ' HIGH priority leads identified'},
-      {t:'success', m:'[OPP SCORER] Pipeline ready. Total market: $' + spend.toLocaleString() + '/mo ad spend detected'},
+      {t:'success', m:'[OPP SCORER] Pipeline ready. Estimated market spend: $' + spend.toLocaleString() + '/mo.'},
     ],
   };
 }
@@ -511,7 +566,7 @@ function CompanyCard(props) {
       co.fatigue && React.createElement(Badge, {color:'var(--rd)', bg:'var(--rd2)'}, 'FATIGUE'),
       !co.hasWebsite && React.createElement(Badge, {color:'var(--am)', bg:'var(--am2)'}, 'NO SITE'),
       co.hasWebsite && co.webGrade && co.webGrade !== 'none' && React.createElement(Badge, {color: co.webGrade==='A'?'var(--gn)':co.webGrade==='B'?'#22d3ee':co.webGrade==='C'||co.webGrade==='D'?'var(--am)':'var(--rd)', bg: co.webGrade==='A'?'var(--gn2)':co.webGrade==='B'?'rgba(34,211,238,.1)':co.webGrade==='C'||co.webGrade==='D'?'var(--am2)':'var(--rd2)'}, 'WEB '+co.webGrade),
-      React.createElement(Badge, {}, '#' + co.rank + ' MAPS'),
+      React.createElement(Badge, {color:co.mapsSource==='verified'?'var(--gn)':'var(--tx3)', bg:co.mapsSource==='verified'?'var(--gn2)':'var(--bg4)'}, '#' + co.rank + ' MAPS ' + (co.mapsSource==='verified'?'VERIFIED':'EST')),
       React.createElement(Badge, {color:'#ffd060', bg:'rgba(255,208,96,.08)'}, '\u2605 ' + co.rating)),
     React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginBottom:11, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, co.address),
     React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6, paddingTop:10, borderTop:'1px solid var(--br)'}},
@@ -577,7 +632,9 @@ function DetailOverview(props) {
     React.createElement(InfoSection, {title:'Map Performance'},
       React.createElement(Row, {label:'Maps rank', value:'#' + co.rank}),
       React.createElement(Row, {label:'Rating', value:'\u2605 ' + co.rating + ' (' + co.reviews + ' reviews)'}),
-      React.createElement(Row, {label:'Est. visits/mo', value:'~' + co.visits.toLocaleString()})),
+      React.createElement(Row, {label:'Business status', value:(co.businessStatus || 'Unknown').replace(/_/g, ' ')}),
+      React.createElement(Row, {label:'Data source', value:co.mapsSource==='verified'?'Google Places API':'Estimated'}),
+      co.googleMapsUri && React.createElement('a', {href:co.googleMapsUri, target:'_blank', rel:'noopener noreferrer', style:{display:'flex', alignItems:'center', justifyContent:'center', marginTop:8, padding:'8px 10px', border:'1px solid var(--br2)', borderRadius:7, color:'var(--ac2)', textDecoration:'none', fontSize:11, fontWeight:600}}, 'Open real listing in Google Maps \u2197')),
     React.createElement(InfoSection, {title:'Services'},
       React.createElement('div', {style:{display:'flex', gap:5, flexWrap:'wrap'}},
         co.cats.map(function(c) {
@@ -955,21 +1012,54 @@ function SearchPage(props) {
     setDataRev(function(v) { return v + 1; });
   }
 
-  function launch() {
+  async function launch() {
     if (running) return;
-    var kwVal = kw.trim() || 'business';
-    var locVal = loc.trim() || 'Sydney';
-    var cntVal = Math.max(4, Math.min(parseInt(count) || 12, 30));
-    COMPANIES = generateCompanies(kwVal, locVal, cntVal);
-    refreshData();
+    var kwVal = kw.trim();
+    var locVal = loc.trim();
+    var cntVal = Math.max(1, Math.min(parseInt(count) || 12, 20));
+    if (!kwVal || !locVal) {
+      setLogs([{id:Date.now(), t:'warn', m:'[MAPS SCOUT] Enter both a keyword and location.'}]);
+      return;
+    }
     setRunning(true); setDone(false); setLogs([]); setProg(0); setSel(null);
     if (props.onStart) props.onStart();
     setAgSt(AGENT_LIST.map(function(a) { return Object.assign({}, a, {status:'idle'}); }));
     timers.current.forEach(clearTimeout);
     timers.current = [];
+    setAS('maps', 'running');
+    addLog({t:'info', m:'[MAPS SCOUT] Searching Google Places for "' + kwVal + ' in ' + locVal + '"...'});
+
+    var placesResult;
+    try {
+      placesResult = await safeConnectorFetch('/api/places/search', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({keyword:kwVal, location:locVal, count:cntVal, regionCode:countryCodeFromLocation(locVal)})
+      });
+      if (!placesResult || !placesResult.ok) {
+        throw new Error((placesResult && placesResult.message) || 'Google Places search failed.');
+      }
+    } catch (error) {
+      setAS('maps', 'idle');
+      setRunning(false);
+      addLog({t:'warn', m:'[MAPS SCOUT] ' + error.message});
+      addLog({t:'warn', m:'[MAPS SCOUT] No dummy results were substituted. Configure GOOGLE_MAPS_API_KEY on the backend and retry.'});
+      return;
+    }
+
+    COMPANIES = companiesFromGooglePlaces(placesResult.places || [], kwVal, locVal);
+    refreshData();
+    setAS('maps', 'done');
+    setProg(15);
+    addLog({t:'success', m:'[MAPS SCOUT] Google Places returned ' + COMPANIES.length + ' real businesses' + (placesResult.cached ? ' (cached)' : '') + '.'});
+    if (COMPANIES.length === 0) {
+      setRunning(false);
+      addLog({t:'warn', m:'[MAPS SCOUT] No businesses matched this query. Try a broader keyword or location.'});
+      return;
+    }
+
     var T = getLogs(kwVal, locVal, cntVal);
     var order = [
-      {id:'maps',    logs:T.maps,    p0:0,  p1:15},
       {id:'gmb',     logs:T.gmb,     p0:15, p1:28},
       {id:'gads',    logs:T.gads,    p0:28, p1:44},
       {id:'meta',    logs:T.meta,    p0:44, p1:58},
@@ -1026,7 +1116,7 @@ function SearchPage(props) {
         React.createElement('div', {style:{display:'flex', flexDirection:compact ? 'column' : 'row', gap:10, marginBottom:12}},
           React.createElement('input', {value:kw, onChange:function(e){setKw(e.target.value);}, placeholder:'Keyword \u2014 restaurant, physio, law firm...', style:Object.assign({}, iStyle, {flex:1})}),
           React.createElement('input', {value:loc, onChange:function(e){setLoc(e.target.value);}, placeholder:'Location \u2014 Sydney, Melbourne...', style:Object.assign({}, iStyle, {width:compact ? '100%' : 220})}),
-          React.createElement('input', {type:'number', value:count, min:4, max:30, onChange:function(e){setCount(e.target.value);}, title:'Number of results (4-30)', style:Object.assign({}, iStyle, {width:compact ? '100%' : 82, textAlign:compact ? 'left' : 'center'})}),
+          React.createElement('input', {type:'number', value:count, min:1, max:20, onChange:function(e){setCount(e.target.value);}, title:'Number of Google Places results (1-20)', style:Object.assign({}, iStyle, {width:compact ? '100%' : 82, textAlign:compact ? 'left' : 'center'})}),
           React.createElement('button', {onClick:launch, disabled:running, style:{background: running ? 'var(--bg4)' : 'var(--ac)', border:'none', borderRadius:8, padding:'11px 22px', color: running ? 'var(--tx3)' : '#fff', fontSize:13, fontWeight:600, cursor: running ? 'not-allowed' : 'pointer', whiteSpace:'nowrap', fontFamily:'var(--fn)', transition:'all .2s'}}, running ? 'Scanning...' : 'Run Scan')),
         React.createElement('div', {style:{height:3, background:'var(--br)', borderRadius:2, overflow:'hidden', marginBottom: logs.length ? 12 : 0}},
           React.createElement('div', {style:{height:'100%', background: done ? 'var(--gn)' : 'var(--ac)', borderRadius:2, width:prog+'%', transition:'width .6s ease'}})),
@@ -1791,9 +1881,11 @@ function SettingsPage() {
   return React.createElement('div', {style:{padding:20, overflowY:'auto', height:'100%', maxWidth:680}},
     React.createElement(Sec, {title:'API Configuration'},
       React.createElement(Fld, {label:'Anthropic API Key', hint:'Used for Profile Builder, Outreach and Campaign generation'}, React.createElement('input', {type:'password', placeholder:'sk-ant-api03-...', value:anthropicKey, onChange:function(e){setAnthropicKey(e.target.value);}, style:iSt})),
-      React.createElement(Fld, {label:'Google Maps API Key', hint:'Required for Maps Scout agent - enables location search'}, React.createElement('input', {type:'password', placeholder:'AIza...', style:iSt})),
+      React.createElement(Fld, {label:'Google Places API', hint:'Server-side connector. Set GOOGLE_MAPS_API_KEY before starting server.js; never paste the key into this page.'}, React.createElement('input', {type:'text', value:'Backend env: GOOGLE_MAPS_API_KEY', readOnly:true, style:iSt})),
       React.createElement(Fld, {label:'Meta Ad Library API', hint:'Server-side connector. Set META_ACCESS_TOKEN before starting server.js; do not paste production tokens into the browser.'}, React.createElement('input', {type:'text', value:'Backend env: META_ACCESS_TOKEN', readOnly:true, style:iSt}))),
     React.createElement(Sec, {title:'Connector Configuration'},
+      React.createElement(Fld, {label:'Google Places safeguards', hint:'The local backend caches repeated queries and applies both per-minute and daily request limits.'},
+        React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.6, background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:8, padding:'10px 12px'}}, 'Default limits: 10 searches per IP per minute, 250 Google requests per day, 20 results per search, and a 15-minute query cache. Google Cloud project quotas should also be configured.')),
       React.createElement(Fld, {label:'Meta API coverage', hint:'Official API verifies political/social-issue ads globally and broader commercial ads for UK/EU delivery. Other markets keep public-library/manual verification fallback.'},
         React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.6, background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:8, padding:'10px 12px'}}, 'Current scan labels Meta as VERIFIED only after the backend returns a successful API response. Otherwise results remain ESTIMATED.'))),
     React.createElement(Sec, {title:'Scraping Configuration'},

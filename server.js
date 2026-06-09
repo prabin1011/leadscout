@@ -4,8 +4,16 @@ const path = require('path');
 
 const PORT = Number(process.env.PORT || 8765);
 const HOST = '127.0.0.1';
-const APP_FILE = process.env.LEADSCOUT_HTML || 'C:\\Users\\acer\\Downloads\\leadscout_v3.html';
+const APP_FILE = process.env.LEADSCOUT_HTML || path.join(__dirname, 'leadscout_v3.html');
 const META_API_VERSION = process.env.META_API_VERSION || 'v25.0';
+const GOOGLE_MAPS_API_KEY = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
+const PLACES_RATE_LIMIT = Math.max(1, Number(process.env.PLACES_RATE_LIMIT || 10));
+const PLACES_DAILY_LIMIT = Math.max(1, Number(process.env.PLACES_DAILY_LIMIT || 250));
+const PLACES_CACHE_MS = Math.max(60_000, Number(process.env.PLACES_CACHE_MS || 900_000));
+
+const requestBuckets = new Map();
+const placesCache = new Map();
+let placesDailyUsage = { date: new Date().toISOString().slice(0, 10), count: 0 };
 
 const EU_COUNTRIES = new Set([
   'AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV',
@@ -48,6 +56,156 @@ function readBody(req) {
 function normalizeCountry(country) {
   const c = String(country || 'AU').trim().toUpperCase();
   return c === 'UK' ? 'GB' : c;
+}
+
+function clientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || req.socket.remoteAddress || 'unknown';
+}
+
+function checkRateLimit(req, scope, maxRequests, windowMs) {
+  const now = Date.now();
+  const key = `${scope}:${clientIp(req)}`;
+  const current = requestBuckets.get(key);
+  if (!current || current.resetAt <= now) {
+    const next = { count: 1, resetAt: now + windowMs };
+    requestBuckets.set(key, next);
+    return { allowed: true, remaining: maxRequests - 1, resetAt: next.resetAt };
+  }
+  if (current.count >= maxRequests) {
+    return { allowed: false, remaining: 0, resetAt: current.resetAt };
+  }
+  current.count += 1;
+  return { allowed: true, remaining: maxRequests - current.count, resetAt: current.resetAt };
+}
+
+function checkDailyPlacesLimit() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (placesDailyUsage.date !== today) {
+    placesDailyUsage = { date: today, count: 0 };
+  }
+  if (placesDailyUsage.count >= PLACES_DAILY_LIMIT) return false;
+  placesDailyUsage.count += 1;
+  return true;
+}
+
+function sanitizeQuery(value, maxLength) {
+  return String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+async function handlePlacesSearch(req, res) {
+  if (req.method !== 'POST') {
+    return sendJson(res, 405, { ok: false, reason: 'method_not_allowed' });
+  }
+
+  const rate = checkRateLimit(req, 'places', PLACES_RATE_LIMIT, 60_000);
+  res.setHeader('X-RateLimit-Limit', String(PLACES_RATE_LIMIT));
+  res.setHeader('X-RateLimit-Remaining', String(rate.remaining));
+  res.setHeader('X-RateLimit-Reset', String(Math.ceil(rate.resetAt / 1000)));
+  if (!rate.allowed) {
+    res.setHeader('Retry-After', String(Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000))));
+    return sendJson(res, 429, { ok: false, reason: 'rate_limited', message: 'Too many searches. Please wait before trying again.' });
+  }
+
+  if (!GOOGLE_MAPS_API_KEY) {
+    return sendJson(res, 503, {
+      ok: false,
+      configured: false,
+      reason: 'missing_google_maps_api_key',
+      message: 'Set GOOGLE_MAPS_API_KEY on the backend. The key is never sent to the browser.'
+    });
+  }
+
+  const raw = await readBody(req);
+  const payload = raw ? JSON.parse(raw) : {};
+  const keyword = sanitizeQuery(payload.keyword, 100);
+  const location = sanitizeQuery(payload.location, 120);
+  const count = Math.max(1, Math.min(Number(payload.count || 12), 20));
+  const regionCode = sanitizeQuery(payload.regionCode, 2).toUpperCase();
+
+  if (!keyword || !location) {
+    return sendJson(res, 400, { ok: false, reason: 'missing_query', message: 'Keyword and location are required.' });
+  }
+
+  const textQuery = `${keyword} in ${location}`;
+  const cacheKey = JSON.stringify({ textQuery: textQuery.toLowerCase(), count, regionCode });
+  const cached = placesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return sendJson(res, 200, { ...cached.data, cached: true });
+  }
+
+  if (!checkDailyPlacesLimit()) {
+    return sendJson(res, 429, {
+      ok: false,
+      reason: 'daily_limit_reached',
+      message: `This server has reached its daily safety cap of ${PLACES_DAILY_LIMIT} Google Places requests.`
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': [
+          'places.id',
+          'places.displayName',
+          'places.formattedAddress',
+          'places.location',
+          'places.primaryType',
+          'places.primaryTypeDisplayName',
+          'places.businessStatus',
+          'places.googleMapsUri',
+          'places.rating',
+          'places.userRatingCount',
+          'places.nationalPhoneNumber',
+          'places.websiteUri',
+          'places.regularOpeningHours'
+        ].join(',')
+      },
+      body: JSON.stringify({
+        textQuery,
+        pageSize: count,
+        rankPreference: 'RELEVANCE',
+        ...(regionCode ? { regionCode } : {})
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return sendJson(res, response.status, {
+        ok: false,
+        configured: true,
+        reason: 'google_places_error',
+        message: data.error && data.error.message ? data.error.message : 'Google Places request failed.',
+        details: data.error || data
+      });
+    }
+
+    const result = {
+      ok: true,
+      configured: true,
+      source: 'google_places_text_search',
+      query: textQuery,
+      count: Array.isArray(data.places) ? data.places.length : 0,
+      places: data.places || [],
+      cached: false
+    };
+    placesCache.set(cacheKey, { data: result, expiresAt: Date.now() + PLACES_CACHE_MS });
+    return sendJson(res, 200, result);
+  } catch (error) {
+    return sendJson(res, 502, {
+      ok: false,
+      configured: true,
+      reason: error.name === 'AbortError' ? 'google_places_timeout' : 'connector_exception',
+      message: error.name === 'AbortError' ? 'Google Places request timed out.' : error.message
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function handleMetaAds(req, res, url) {
@@ -159,8 +317,16 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         metaConfigured: Boolean(process.env.META_ACCESS_TOKEN),
-        metaApiVersion: META_API_VERSION
+        metaApiVersion: META_API_VERSION,
+        googlePlacesConfigured: Boolean(GOOGLE_MAPS_API_KEY),
+        placesRateLimitPerMinute: PLACES_RATE_LIMIT,
+        placesDailyLimit: PLACES_DAILY_LIMIT,
+        placesDailyUsed: placesDailyUsage.count
       });
+    }
+
+    if (url.pathname === '/api/places/search') {
+      return await handlePlacesSearch(req, res);
     }
 
     if (url.pathname === '/api/meta-ads/search') {
