@@ -98,7 +98,24 @@ function countryCodeFromLocation(loc) {
 }
 
 function safeConnectorFetch(path, options) {
-  return fetch(API_BASE + path, options || {}).then(function(r) { return r.json(); });
+  return fetch(API_BASE + path, options || {}).then(function(r) {
+    return r.json().then(function(data) {
+      if (!r.ok) {
+        var err = new Error(data.message || 'Request failed');
+        err.data = data;
+        throw err;
+      }
+      return data;
+    });
+  });
+}
+
+function requestAnthropic(prompt, maxTokens) {
+  return safeConnectorFetch('/api/anthropic/messages', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({prompt:prompt, maxTokens:maxTokens})
+  });
 }
 
 function verifyMetaAdsForCompanies(companies, loc, onLog, onUpdate) {
@@ -1442,9 +1459,7 @@ function OutreachPage(props) {
     var typeMap = {cold_email:'cold outreach email', linkedin:'LinkedIn connection message (max 300 chars)', sms:'SMS text message (max 160 chars)', followup:'follow-up email after no response'};
     var toneMap = {professional:'professional and polished', friendly:'friendly and conversational', direct:'direct and bold', consultative:'consultative and insight-led'};
     var prompt = 'You are a top B2B sales copywriter. Write a ' + typeMap[type] + ' to ' + sel.name + ', a ' + sel.type + ' in ' + sel.suburb + ', Sydney Australia.\n\nINTELLIGENCE:\n- Google Ads: ' + (sel.gads ? 'Running (score: ' + sel.gs + '/100)' : 'NOT running - missing all search traffic') + '\n- Meta Ads: ' + (sel.mads ? 'Running (score: ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')' : 'NOT running - social audience untapped') + '\n- Maps rank: #' + sel.rank + '\n- Reviews: ' + sel.reviews + ' at ' + sel.rating + ' stars\n- Opportunity: ' + sel.insight + '\n- Angle: ' + sel.angle + '\n\nTONE: ' + toneMap[tone] + '\nBe specific about their actual situation. No generic phrases.\n\nRespond ONLY in valid JSON: {"subject":"email subject or empty string","body":"the full message","ps":"P.S. line or empty string"}';
-    var key = getApiKey();
-    fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model:'claude-sonnet-4-6-20250514', max_tokens:900, messages:[{role:'user', content:prompt}]})})
-      .then(function(r) { return r.json(); })
+    requestAnthropic(prompt, 900)
       .then(function(d) {
         if (d.error) throw new Error(d.error.message);
         var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
@@ -1571,9 +1586,7 @@ function WebsiteBuilderPage(props) {
     var colorDesc = {professional:'navy, white, gold accents', vibrant:'bright coral, white, dark navy', natural:'sage green, cream, warm brown', dark:'charcoal, white, electric blue', warm:'warm orange, cream, deep burgundy'};
     var prompt = 'You are an expert web developer. Create a complete, production-ready single-page HTML website for a real local business.\n\nBusiness: ' + sel.name + '\nType: ' + sel.type + '\nLocation: ' + sel.suburb + ', Sydney NSW\nPhone: ' + sel.phone + '\nEmail: ' + sel.email + '\nServices: ' + sel.cats.join(', ') + '\nFounded: ' + sel.founded + '\nHours: ' + sel.hours + '\nRating: ' + sel.rating + ' stars, ' + sel.reviews + ' reviews\nBooking: ' + (sel.booking ? 'Yes' : 'No') + '\n\nDESIGN: ' + styleDesc[style] + '\nCOLORS: ' + colorDesc[colorScheme] + '\n\nREQUIREMENTS:\n- Complete HTML5 page with embedded CSS and minimal JS\n- Mobile-responsive using CSS flexbox/grid\n- Hero section with headline, subheadline, CTA button\n- Services/features section (use their actual service categories)\n- About section with trust signals (founded year, reviews, team)\n- Testimonials section (3 realistic fake reviews)\n- Contact section with phone, email, address\n- Google Maps embed placeholder\n- Booking CTA if applicable\n- Proper meta tags for SEO\n- Schema.org LocalBusiness markup\n- Fast loading (no external dependencies except Google Fonts)\n\nReturn ONLY the complete HTML code, nothing else. Start with <!DOCTYPE html>.';
 
-    var key = getApiKey();
-    fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model:'claude-sonnet-4-6-20250514', max_tokens:4000, messages:[{role:'user', content:prompt}]})})
-      .then(function(r) { return r.json(); })
+    requestAnthropic(prompt, 4000)
       .then(function(d) {
         if (d.error) throw new Error(d.error.message);
         var html = (d.content || []).map(function(b) { return b.text || ''; }).join('');
@@ -1701,9 +1714,7 @@ function CampaignsPage(props) {
     setBuilding(true); setBuilt(null);
     var gInfo = platform === 'google' ? ('Current Google: ' + (sel.gads ? ('Running (score ' + sel.gs + '/100)') : 'NOT running') + '\nDetected keywords: ' + (sel.gkw.length ? sel.gkw.join(', ') : 'none')) : ('Current Meta: ' + (sel.mads ? ('Running (score ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')') : 'NOT running'));
     var prompt = 'You are an expert digital marketing strategist. Create a detailed ' + (platform==='google'?'Google Ads':'Meta Ads') + ' campaign plan.\n\nBusiness: ' + sel.name + '\nType: ' + sel.type + '\nLocation: ' + sel.suburb + ', Sydney NSW\nGoal: ' + goal + '\nMonthly budget: AUD $' + budget + '\nKey insight: ' + sel.insight + '\n' + gInfo + '\n\nRespond ONLY with valid JSON: {"campaignName":"name","objective":"objective","budgetSplit":"how to allocate","headlines":["3 ad headlines under 30 chars"],"descriptions":["2 descriptions under 90 chars"],"keywords":["6 target keywords"],"audiences":["3 audience segments"],"bidStrategy":"bid strategy","adSchedule":"schedule","estimatedResults":"30-day projection","quickWins":["2 first actions"]}';
-    var key = getApiKey();
-    fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model:'claude-sonnet-4-6-20250514', max_tokens:900, messages:[{role:'user', content:prompt}]})})
-      .then(function(r) { return r.json(); })
+    requestAnthropic(prompt, 900)
       .then(function(d) {
         if (d.error) throw new Error(d.error.message);
         var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
@@ -1861,11 +1872,9 @@ function AgentsPage(props) {
 // ─── SETTINGS PAGE ────────────────────────────────────────────────────────────
 
 function SettingsPage() {
-  var [saved, setSaved] = useState(false);
   var [autoScore, setAutoScore] = useState(true);
   var [notify, setNotify] = useState(true);
   var [maxP, setMaxP] = useState(8);
-  var [anthropicKey, setAnthropicKey] = useState(getApiKey());
   var iSt = {width:'100%', background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:8, padding:'9px 12px', color:'var(--tx)', fontSize:13, fontFamily:'var(--mo)', outline:'none'};
   function Sec(secProps) {
     return React.createElement('div', {style:card({padding:18, marginBottom:14})},
@@ -1880,9 +1889,9 @@ function SettingsPage() {
   }
   return React.createElement('div', {style:{padding:20, overflowY:'auto', height:'100%', maxWidth:680}},
     React.createElement(Sec, {title:'API Configuration'},
-      React.createElement(Fld, {label:'Anthropic API Key', hint:'Used for Profile Builder, Outreach and Campaign generation'}, React.createElement('input', {type:'password', placeholder:'sk-ant-api03-...', value:anthropicKey, onChange:function(e){setAnthropicKey(e.target.value);}, style:iSt})),
-      React.createElement(Fld, {label:'Google Places API', hint:'Server-side connector. Set GOOGLE_MAPS_API_KEY before starting server.js; never paste the key into this page.'}, React.createElement('input', {type:'text', value:'Backend env: GOOGLE_MAPS_API_KEY', readOnly:true, style:iSt})),
-      React.createElement(Fld, {label:'Meta Ad Library API', hint:'Server-side connector. Set META_ACCESS_TOKEN before starting server.js; do not paste production tokens into the browser.'}, React.createElement('input', {type:'text', value:'Backend env: META_ACCESS_TOKEN', readOnly:true, style:iSt}))),
+      React.createElement(Fld, {label:'Anthropic API', hint:'Server-side Vercel environment variable used for Outreach, Campaign and Website generation.'}, React.createElement('input', {type:'text', value:'Vercel env: ANTHROPIC_API_KEY', readOnly:true, style:iSt})),
+      React.createElement(Fld, {label:'Google Places API', hint:'Server-side Vercel environment variable for real business search.'}, React.createElement('input', {type:'text', value:'Vercel env: GOOGLE_MAPS_API_KEY', readOnly:true, style:iSt})),
+      React.createElement(Fld, {label:'Meta Ad Library API', hint:'Server-side Vercel environment variable for supported Meta verification.'}, React.createElement('input', {type:'text', value:'Vercel env: META_ACCESS_TOKEN', readOnly:true, style:iSt}))),
     React.createElement(Sec, {title:'Connector Configuration'},
       React.createElement(Fld, {label:'Google Places safeguards', hint:'The local backend caches repeated queries and applies both per-minute and daily request limits.'},
         React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.6, background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:8, padding:'10px 12px'}}, 'Default limits: 10 searches per IP per minute, 250 Google requests per day, 20 results per search, and a 15-minute query cache. Google Cloud project quotas should also be configured.')),
@@ -1896,12 +1905,11 @@ function SettingsPage() {
       React.createElement(Fld, {label:'Auto-score leads after scrape', hint:'Automatically runs Opportunity Scorer when pipeline completes'}, React.createElement(Toggle, {value:autoScore, onChange:setAutoScore})),
       React.createElement(Fld, {label:'Alert on high-priority leads', hint:'Show notifications for leads scoring 80 or above'}, React.createElement(Toggle, {value:notify, onChange:setNotify}))),
     React.createElement(Sec, {title:'About LeadScout AI'},
-      [['Version','3.0.0'],['Agent pipeline',AGENT_LIST.length + ' micro-agents (sequential)'],['AI model','Claude claude-sonnet-4-20250514'],['Data sources','Google Maps \u00b7 GMB \u00b7 Google Ads Transparency \u00b7 Meta Ad Library']].map(function(pair) {
+      [['Version','3.0.0'],['Agent pipeline',AGENT_LIST.length + ' workflow agents'],['AI model','Configured by ANTHROPIC_MODEL'],['Data sources','Google Places \u00b7 Google Ads Transparency \u00b7 Meta Ad Library']].map(function(pair) {
         return React.createElement('div', {key:pair[0], style:{display:'flex', justifyContent:'space-between', fontSize:12, padding:'6px 0', borderBottom:'1px solid var(--br)'}},
           React.createElement('span', {style:{color:'var(--tx3)'}}, pair[0]),
           React.createElement('span', {style:{color:'var(--tx2)', fontFamily:'var(--mo)', fontSize:11}}, pair[1]));
-      })),
-    React.createElement('button', {onClick:function(){ setApiKey(anthropicKey); setSaved(true); setTimeout(function(){setSaved(false);},2000); }, style:{padding:'11px 28px', background: saved?'var(--gn)':'var(--ac)', border:'none', borderRadius:9, color:'#fff', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:'var(--fn)', transition:'all .2s'}}, saved ? '\u2713 Settings Saved' : 'Save Settings'));
+      })));
 }
 
 // ─── ROOT APP ─────────────────────────────────────────────────────────────────
@@ -1915,7 +1923,7 @@ var PAGE_META = {
   outreach:    ['Outreach Queue',    'AI-generated outreach messages'],
   webBuilder:  ['Website Builder',   'Build client websites with Claude AI'],
   agents:      ['Agent Monitor',     'Real-time agent status & configuration'],
-  settings:    ['Settings',          'API keys and scraping preferences'],
+  settings:    ['Settings',          'Connector status and workflow preferences'],
 };
 
 function App() {

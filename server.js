@@ -300,6 +300,49 @@ async function handleMetaAds(req, res, url) {
   }
 }
 
+async function handleAnthropic(req, res) {
+  if (req.method !== 'POST') {
+    return sendJson(res, 405, { ok: false, reason: 'method_not_allowed' });
+  }
+
+  const apiKey = String(process.env.ANTHROPIC_API_KEY || '').trim();
+  if (!apiKey) {
+    return sendJson(res, 503, {
+      ok: false,
+      reason: 'missing_anthropic_api_key',
+      message: 'Set ANTHROPIC_API_KEY on the backend.'
+    });
+  }
+
+  const raw = await readBody(req);
+  const payload = raw ? JSON.parse(raw) : {};
+  const prompt = String(payload.prompt || '').trim();
+  const maxTokens = Math.max(100, Math.min(Number(payload.maxTokens || 900), 4000));
+  if (!prompt || prompt.length > 30000) {
+    return sendJson(res, 400, { ok: false, reason: 'invalid_prompt' });
+  }
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+        max_tokens: maxTokens,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await response.json();
+    return sendJson(res, response.status, data);
+  } catch (error) {
+    return sendJson(res, 502, { ok: false, reason: 'anthropic_request_failed', message: error.message });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'OPTIONS') {
@@ -318,6 +361,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         metaConfigured: Boolean(process.env.META_ACCESS_TOKEN),
         metaApiVersion: META_API_VERSION,
+        anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
         googlePlacesConfigured: Boolean(GOOGLE_MAPS_API_KEY),
         placesRateLimitPerMinute: PLACES_RATE_LIMIT,
         placesDailyLimit: PLACES_DAILY_LIMIT,
@@ -331,6 +375,10 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/meta-ads/search') {
       return await handleMetaAds(req, res, url);
+    }
+
+    if (url.pathname === '/api/anthropic/messages') {
+      return await handleAnthropic(req, res);
     }
 
     if (url.pathname === '/' || url.pathname === '/leadscout_v3.html') {
