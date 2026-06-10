@@ -343,15 +343,10 @@ const ANTHROPIC_OUTPUT_SCHEMAS = {
       campaignName: { type: 'string' },
       objective: { type: 'string' },
       strategySummary: { type: 'string' },
-      verifiedInputs: ANTHROPIC_STRING_ARRAY,
-      hypotheses: ANTHROPIC_STRING_ARRAY,
-      offer: { type: 'string' },
       budgetSplit: { type: 'string' },
       headlines: ANTHROPIC_STRING_ARRAY,
       descriptions: ANTHROPIC_STRING_ARRAY,
       keywords: ANTHROPIC_STRING_ARRAY,
-      negativeKeywords: ANTHROPIC_STRING_ARRAY,
-      audiences: ANTHROPIC_STRING_ARRAY,
       creativeConcepts: {
         type: 'array',
         items: {
@@ -367,19 +362,14 @@ const ANTHROPIC_OUTPUT_SCHEMAS = {
           additionalProperties: false
         }
       },
-      landingPagePlan: ANTHROPIC_STRING_ARRAY,
       bidStrategy: { type: 'string' },
       adSchedule: { type: 'string' },
-      measurement: ANTHROPIC_STRING_ARRAY,
-      experiments: ANTHROPIC_STRING_ARRAY,
       estimatedResults: { type: 'string' },
       quickWins: ANTHROPIC_STRING_ARRAY
     },
     required: [
-      'campaignName', 'objective', 'strategySummary', 'verifiedInputs', 'hypotheses',
-      'offer', 'budgetSplit', 'headlines', 'descriptions', 'keywords',
-      'negativeKeywords', 'audiences', 'creativeConcepts', 'landingPagePlan',
-      'bidStrategy', 'adSchedule', 'measurement', 'experiments',
+      'campaignName', 'objective', 'strategySummary', 'budgetSplit', 'headlines',
+      'descriptions', 'keywords', 'creativeConcepts', 'bidStrategy', 'adSchedule',
       'estimatedResults', 'quickWins'
     ],
     additionalProperties: false

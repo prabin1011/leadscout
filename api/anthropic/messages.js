@@ -27,15 +27,10 @@ const OUTPUT_SCHEMAS = {
       campaignName: { type: 'string' },
       objective: { type: 'string' },
       strategySummary: { type: 'string' },
-      verifiedInputs: STRING_ARRAY,
-      hypotheses: STRING_ARRAY,
-      offer: { type: 'string' },
       budgetSplit: { type: 'string' },
       headlines: STRING_ARRAY,
       descriptions: STRING_ARRAY,
       keywords: STRING_ARRAY,
-      negativeKeywords: STRING_ARRAY,
-      audiences: STRING_ARRAY,
       creativeConcepts: {
         type: 'array',
         items: {
@@ -51,19 +46,14 @@ const OUTPUT_SCHEMAS = {
           additionalProperties: false
         }
       },
-      landingPagePlan: STRING_ARRAY,
       bidStrategy: { type: 'string' },
       adSchedule: { type: 'string' },
-      measurement: STRING_ARRAY,
-      experiments: STRING_ARRAY,
       estimatedResults: { type: 'string' },
       quickWins: STRING_ARRAY
     },
     required: [
-      'campaignName', 'objective', 'strategySummary', 'verifiedInputs', 'hypotheses',
-      'offer', 'budgetSplit', 'headlines', 'descriptions', 'keywords',
-      'negativeKeywords', 'audiences', 'creativeConcepts', 'landingPagePlan',
-      'bidStrategy', 'adSchedule', 'measurement', 'experiments',
+      'campaignName', 'objective', 'strategySummary', 'budgetSplit', 'headlines',
+      'descriptions', 'keywords', 'creativeConcepts', 'bidStrategy', 'adSchedule',
       'estimatedResults', 'quickWins'
     ],
     additionalProperties: false
