@@ -161,6 +161,15 @@ function requestAnthropic(prompt, maxTokens, task) {
   });
 }
 
+function parseModelJson(response) {
+  if (response && response.error) throw new Error(response.error.message || 'AI request failed.');
+  var text = (response && response.content || []).map(function(block) { return block.text || ''; }).join('').replace(/```json|```/gi, '').trim();
+  var start = text.indexOf('{');
+  var end = text.lastIndexOf('}');
+  if (start > -1 && end > start) text = text.slice(start, end + 1);
+  return JSON.parse(text);
+}
+
 function verifyMetaAdsForCompanies(companies, loc, onLog, onUpdate) {
   var country = countryCodeFromLocation(loc);
   return safeConnectorFetch('/api/health').then(function(health) {
@@ -648,7 +657,7 @@ function CompanyCard(props) {
       co.gads && React.createElement(Badge, {color:'#6b8fff', bg:'rgba(59,111,255,.1)'}, 'G ADS EST'),
       co.metaStatus === 'checking' && React.createElement(Badge, {color:'var(--ac2)', bg:'var(--ac3)'}, 'META CHECK'),
       co.mads && React.createElement(Badge, {color:co.metaVerified?'var(--gn)':'#b97fff', bg:co.metaVerified?'var(--gn2)':'rgba(168,85,247,.1)'}, co.metaVerified ? 'META VERIFIED' : 'META EST'),
-      !co.gads && !co.mads && React.createElement(Badge, {color:'var(--am)', bg:'var(--am2)'}, 'NO ADS EST'),
+      !co.gads && !co.mads && React.createElement(Badge, {color:'var(--am)', bg:'var(--am2)'}, 'ADS UNKNOWN'),
       co.fatigue && React.createElement(Badge, {color:'var(--rd)', bg:'var(--rd2)'}, 'FATIGUE'),
       !co.hasWebsite && React.createElement(Badge, {color:'var(--am)', bg:'var(--am2)'}, 'NO SITE'),
       co.hasWebsite && co.webGrade && co.webGrade !== 'none' && React.createElement(Badge, {color: co.webGrade==='A'?'var(--gn)':co.webGrade==='B'?'#22d3ee':co.webGrade==='C'||co.webGrade==='D'?'var(--am)':'var(--rd)', bg: co.webGrade==='A'?'var(--gn2)':co.webGrade==='B'?'rgba(34,211,238,.1)':co.webGrade==='C'||co.webGrade==='D'?'var(--am2)':'var(--rd2)'}, 'WEB '+co.webGrade),
@@ -660,8 +669,8 @@ function CompanyCard(props) {
         React.createElement('div', {style:{fontSize:13, fontWeight:600, fontFamily:'var(--mo)', color:'var(--tx)'}}, co.reviews),
         React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:1}}, 'reviews')),
       React.createElement('div', {style:{textAlign:'center'}},
-        React.createElement('div', {style:{fontSize:13, fontWeight:600, fontFamily:'var(--mo)', color: co.spend > 0 ? 'var(--am)' : 'var(--tx3)'}}, co.spend > 0 ? '$' + (co.spend/1000).toFixed(1) + 'K' : '$0'),
-        React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:1}}, 'est. spend')),
+        React.createElement('div', {style:{fontSize:13, fontWeight:600, fontFamily:'var(--mo)', color: co.spend > 0 ? 'var(--am)' : 'var(--tx3)'}}, co.spend > 0 ? '$' + (co.spend/1000).toFixed(1) + 'K' : '\u2014'),
+        React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:1}}, 'ad spend')),
       React.createElement('div', {style:{textAlign:'center'}},
         React.createElement('div', {style:{fontSize:13, fontWeight:600, fontFamily:'var(--mo)', color:sc}}, co.score),
         React.createElement('div', {style:{fontSize:10, color:'var(--tx3)', marginTop:1}}, 'opp. score'))));
@@ -728,7 +737,7 @@ function DetailOverview(props) {
         }))),
     React.createElement(InfoSection, {title:'Ad Presence \u2014 Estimated / Verified'},
       React.createElement('div', {style:{fontSize:11, color:'var(--am)', background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:6, padding:'6px 10px', marginBottom:10, lineHeight:1.5}},
-        'Google signals are estimated. Meta becomes verified only when the backend has a valid META_ACCESS_TOKEN and the API returns records.'),
+        'Google advertising status is unknown until manually verified. Meta becomes verified only when the API returns a conclusive response.'),
       React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10}},
         [{label:'Google Ads', active:co.gads, score:co.gs, url:'https://adstransparency.google.com/?region=AU&domain='+co.website},
          {label:'Meta Ads',   active:co.mads, score:co.ms, url:'https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=AU&q='+encodeURIComponent(co.name)+'&search_type=page&media_type=all'}
@@ -737,10 +746,10 @@ function DetailOverview(props) {
             React.createElement('div', {style:{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:5}},
               React.createElement('div', {style:{fontSize:11, color: item.active ? 'var(--tx)' : 'var(--tx3)', fontWeight:500}}, item.label),
               React.createElement('span', {style:{fontSize:9, fontFamily:'var(--mo)', color:'var(--tx3)', background:'var(--bg4)', borderRadius:4, padding:'1px 5px'}}, 'VERIFY \u2197')),
-            item.active ? React.createElement(ScoreBar, {score:item.score}) : React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, 'Not detected'));
+            item.active ? React.createElement(ScoreBar, {score:item.score}) : React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, 'Status unknown'));
         })),
-      React.createElement(Row, {label:'Meta source', value:co.metaVerified ? 'Verified API' : (co.metaStatus === 'checking' ? 'Checking API' : 'Estimated / manual verify')}),
-      React.createElement(Row, {label:'Est. total spend', value: co.spend > 0 ? '$' + co.spend.toLocaleString() + '/mo (estimated)' : 'None detected'})));
+      React.createElement(Row, {label:'Meta source', value:co.metaVerified ? 'Verified API' : (co.metaStatus === 'checking' ? 'Checking API' : 'Not verified')}),
+      React.createElement(Row, {label:'Ad spend', value: co.spend > 0 ? '$' + co.spend.toLocaleString() + '/mo (estimated)' : 'Unknown'})));
 }
 
 function GoogleTransparencyBtn(props) {
@@ -759,8 +768,8 @@ function DetailGoogle(props) {
   if (!co.gads) {
     return React.createElement('div', {style:{padding:'30px 16px', textAlign:'center'}},
       React.createElement('div', {style:{fontSize:28, marginBottom:12, opacity:.35}}, '\uD83D\uDD0E'),
-      React.createElement('div', {style:{fontSize:14, color:'var(--tx2)', fontWeight:500, marginBottom:6}}, 'No Google Ads detected'),
-      React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', lineHeight:1.7, marginBottom:16}}, 'This business is missing all search intent traffic. Strong opportunity to pitch Google Ads setup.'),
+      React.createElement('div', {style:{fontSize:14, color:'var(--tx2)', fontWeight:500, marginBottom:6}}, 'Google Ads status unknown'),
+      React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', lineHeight:1.7, marginBottom:16}}, 'Use the Transparency Centre link below before making any claim about active advertising.'),
       React.createElement(GoogleTransparencyBtn, {website:co.website}));
   }
   return React.createElement('div', null,
@@ -818,7 +827,7 @@ function DetailMeta(props) {
     return React.createElement('div', null,
       statusBox,
       React.createElement('div', {style:{padding:'24px 16px', textAlign:'center'}},
-        React.createElement('div', {style:{fontSize:14, color:'var(--tx2)', fontWeight:500, marginBottom:6}}, co.metaVerified ? 'No Meta Ads returned by API' : 'No Meta Ads detected yet'),
+        React.createElement('div', {style:{fontSize:14, color:'var(--tx2)', fontWeight:500, marginBottom:6}}, co.metaVerified ? 'No Meta records returned by API' : 'Meta Ads status unknown'),
         React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', lineHeight:1.7, marginBottom:16}}, co.metaVerified ? 'The API returned no records for this company and market.' : 'This may be a real gap, or the connector may need token/API coverage. Verify in the public library before outreach.'),
         React.createElement(MetaLibraryBtn, {name:co.name})));
   }
@@ -949,8 +958,8 @@ function DetailInsight(props) {
 function DetailOutreach(props) {
   var co = props.co;
   var pts = [];
-  if (!co.gads) pts.push('No Google Ads - missing all search intent traffic for ' + co.type + ' in ' + co.suburb);
-  if (!co.mads) pts.push('Zero social advertising - target audience active on Instagram with no brand reach');
+  if (co.googleSource === 'not_connected') pts.push('Google Ads status is unknown - verify in the Transparency Centre before mentioning it');
+  if (co.metaSource !== 'verified') pts.push('Meta Ads status is not verified - use the public Ad Library link before mentioning it');
   if (co.fatigue) pts.push('Creative fatigue: same ad running ' + co.mdur + ' - CTR declining');
   if (co.rank > 5) pts.push('Maps rank #' + co.rank + ' - losing local search traffic to top 3 competitors');
   if (!co.booking) pts.push('No online booking integration - friction in conversion path');
@@ -1491,7 +1500,7 @@ function AdIntelPage(props) {
                 React.createElement('div', {style:{background:'var(--bg3)', borderRadius:8, padding:'10px 12px', marginBottom:8}},
                   React.createElement('div', {style:{fontSize:12, color:'#8ab4f8', fontWeight:600, marginBottom:3}}, co.gt),
                   React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', lineHeight:1.5}}, co.gd)))
-            : React.createElement('div', {style:{background:'var(--rd2)', border:'1px solid var(--rd3)', borderRadius:8, padding:10, fontSize:12, color:'var(--rd)'}}, '\u26a0\ufe0f No Google Ads - opportunity to pitch'));
+            : React.createElement('div', {style:{background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:8, padding:10, fontSize:12, color:'var(--am)'}}, 'Google Ads status unknown - verify manually'));
       })),
 
     tab === 'meta' && React.createElement('div', {className:'fade-up', style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}},
@@ -1509,7 +1518,7 @@ function AdIntelPage(props) {
                   React.createElement('div', {style:{fontSize:12, color:'#7da8ff', fontWeight:600, marginBottom:3}}, co.mt),
                   React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', lineHeight:1.5}}, co.md)),
                 React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, 'Obj: ' + co.mobj + ' \u00b7 Running: ' + co.mdur))
-            : React.createElement('div', {style:{background:'var(--rd2)', border:'1px solid var(--rd3)', borderRadius:8, padding:10, fontSize:12, color:'var(--rd)'}}, '\u26a0\ufe0f No Meta Ads - untapped social audience'));
+            : React.createElement('div', {style:{background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:8, padding:10, fontSize:12, color:'var(--am)'}}, co.metaVerified ? 'No Meta records returned for this search' : 'Meta Ads status unknown - verify manually'));
       })),
 
     tab === 'gaps' && React.createElement('div', {className:'fade-up', style:card({padding:18})},
@@ -1562,6 +1571,7 @@ function OutreachPage(props) {
   var [gen, setGen] = useState(false);
   var [result, setResult] = useState(null);
   var [copied, setCopied] = useState(false);
+  var [outreachError, setOutreachError] = useState('');
 
   useEffect(function() {
     if (props.emailTarget) { setSel(props.emailTarget); props.setEmailTarget(null); }
@@ -1577,18 +1587,14 @@ function OutreachPage(props) {
 
   function generate() {
     if (!sel || gen) return;
-    setGen(true); setResult(null);
+    setGen(true); setResult(null); setOutreachError('');
     var typeMap = {cold_email:'cold outreach email', linkedin:'LinkedIn connection message (max 300 chars)', sms:'SMS text message (max 160 chars)', followup:'follow-up email after no response'};
     var toneMap = {professional:'professional and polished', friendly:'friendly and conversational', direct:'direct and bold', consultative:'consultative and insight-led'};
-    var prompt = 'You are a top B2B sales copywriter. Write a ' + typeMap[type] + ' to ' + sel.name + ', a ' + sel.type + ' in ' + sel.suburb + ', Sydney Australia.\n\nINTELLIGENCE:\n- Google Ads: ' + (sel.gads ? 'Running (score: ' + sel.gs + '/100)' : 'NOT running - missing all search traffic') + '\n- Meta Ads: ' + (sel.mads ? 'Running (score: ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')' : 'NOT running - social audience untapped') + '\n- Maps rank: #' + sel.rank + '\n- Reviews: ' + sel.reviews + ' at ' + sel.rating + ' stars\n- Opportunity: ' + sel.insight + '\n- Angle: ' + sel.angle + '\n\nTONE: ' + toneMap[tone] + '\nBe specific about their actual situation. No generic phrases.\n\nRespond ONLY in valid JSON: {"subject":"email subject or empty string","body":"the full message","ps":"P.S. line or empty string"}';
+    var prompt = 'You are a senior B2B outreach copywriter. Write a ' + typeMap[type] + ' for the business below.\n\nVERIFIED FACTS:\n' + JSON.stringify({name:sel.name,type:sel.type,address:sel.address,location:sel.suburb,rating:sel.rating,reviewCount:sel.reviews,website:sel.website || null,phone:sel.phone}, null, 2) + '\n\nSTATUS AND OPPORTUNITY:\n- Google Ads status: ' + (sel.googleSource === 'not_connected' ? 'unknown; no live connector is configured' : (sel.gads ? 'verified or detected' : 'not detected')) + '\n- Meta Ads status: ' + (sel.metaSource === 'verified' ? (sel.mads ? 'verified records found' : 'verified search returned no records') : 'unknown; not verified') + '\n- Maps result position for this search: #' + sel.rank + '\n- Opportunity: ' + sel.insight + '\n- Suggested angle: ' + sel.angle + '\n\nWRITING RULES:\n- Tone: ' + toneMap[tone] + '.\n- Never claim the business is missing ads, losing revenue, wasting spend, serving patients, or being outranked unless verified facts explicitly support it.\n- Do not invent competitor behavior, results, benchmarks, guarantees, services, offers, or personal research.\n- Make the opening specific to the business category and verified online presence.\n- Keep one clear idea, one useful observation, and one low-friction CTA.\n- Avoid fake familiarity, hype, generic compliments, and manipulative urgency.\n\nRespond ONLY in valid JSON: {"subject":"email subject or empty string","body":"the full message","ps":"P.S. line or empty string"}';
     requestAnthropic(prompt, 900, 'outreach')
-      .then(function(d) {
-        if (d.error) throw new Error(d.error.message);
-        var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
-        return JSON.parse(txt.replace(/```json|```/g, '').trim());
-      })
+      .then(parseModelJson)
       .then(function(parsed) { setResult(parsed); })
-      .catch(function() { setResult(getMockEmail(sel, tone, type)); })
+      .catch(function(error) { setOutreachError(error.message || 'Outreach generation failed.'); })
       .finally(function() { setGen(false); });
   }
 
@@ -1648,6 +1654,7 @@ function OutreachPage(props) {
                     React.createElement('option', {value:'consultative'}, 'Consultative')))),
               React.createElement('button', {onClick:generate, disabled:gen, style:{width:'100%', padding:11, background: gen?'var(--bg4)':'var(--ac)', border:'none', borderRadius:9, color: gen?'var(--tx3)':'#fff', fontSize:13, fontWeight:600, cursor: gen?'not-allowed':'pointer', fontFamily:'var(--fn)', display:'flex', alignItems:'center', justifyContent:'center', gap:8}},
                 gen ? [React.createElement('span', {key:'s', style:{animation:'spin 1s linear infinite', display:'inline-block'}}, '\u27f3'), ' Generating with Claude AI...'] : '\u2728 Generate Outreach Message')),
+            outreachError && React.createElement('div', {style:{background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:8, color:'var(--am)', padding:'10px 12px', fontSize:12, marginBottom:12}}, outreachError + ' No canned message was substituted.'),
             result && React.createElement('div', {className:'fade-up', style:card({padding:16, border:'1px solid rgba(59,111,255,.22)'})},
               React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14}},
                 React.createElement('div', {style:{fontSize:11, color:'var(--ac2)', fontFamily:'var(--mo)'}}, '\u26a1 CLAUDE AI - GENERATED OUTREACH'),
@@ -1868,14 +1875,12 @@ function CampaignsPage(props) {
   function build() {
     if (!sel || building) return;
     setBuilding(true); setBuilt(null); setCampaignError('');
-    var gInfo = platform === 'google' ? ('Current Google: ' + (sel.gads ? ('Running (score ' + sel.gs + '/100)') : 'NOT running') + '\nDetected keywords: ' + (sel.gkw.length ? sel.gkw.join(', ') : 'none')) : ('Current Meta: ' + (sel.mads ? ('Running (score ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')') : 'NOT running'));
+    var gInfo = platform === 'google'
+      ? ('Current Google: ' + (sel.googleSource === 'not_connected' ? 'status unknown; manual verification required' : (sel.gads ? ('running signal (score ' + sel.gs + '/100)') : 'no signal detected')) + '\nDetected keywords: ' + (sel.gkw.length ? sel.gkw.join(', ') : 'none'))
+      : ('Current Meta: ' + (sel.metaSource !== 'verified' ? 'status unknown; API verification unavailable or inconclusive' : (sel.mads ? ('verified records found (score ' + sel.ms + '/100)') : 'verified query returned no records')));
     var prompt = 'You are a senior performance creative strategist building a commercially credible ' + (platform==='google'?'Google Ads':'Meta Ads') + ' campaign. Think through market intent, customer anxieties, offers, proof, funnel stage, creative fatigue, landing-page continuity, measurement, and budget constraints before writing.\n\nVERIFIED BUSINESS DATA:\n' + JSON.stringify({name:sel.name,type:sel.type,location:sel.suburb,address:sel.address,services:sel.cats,rating:sel.rating,reviewCount:sel.reviews,website:sel.website || null,phone:sel.phone}, null, 2) + '\n\nWORKING INTELLIGENCE (some fields are estimates and must be labeled as hypotheses):\nGoal: ' + goal + '\nMonthly budget AUD: ' + budget + '\nOpportunity note: ' + sel.insight + '\nPitch angle: ' + sel.angle + '\n' + gInfo + '\n\nSTRATEGY RULES:\n- Do not invent discounts, prices, guarantees, accreditations, conversion rates, or competitor facts.\n- Separate verified facts from strategic hypotheses.\n- Make creative specific to this business category and local buyer intent; avoid generic phrases such as "quality service" and "we care".\n- Google headlines must be 30 characters or fewer and descriptions 90 characters or fewer. Meta copy should include distinct hooks for pain, aspiration, proof, and objection handling.\n- Forecasts must be presented as planning ranges with assumptions, never promises.\n- Include measurement events and a testing plan that can identify why performance changes.\n\nRespond ONLY with valid JSON using this schema:\n{"campaignName":"specific name","objective":"measurable objective","strategySummary":"3-5 sentence strategic rationale","verifiedInputs":["facts used"],"hypotheses":["assumptions to validate"],"offer":"credible offer or CTA without fabricated claims","budgetSplit":"allocation with amounts and percentages","headlines":["8 platform-compliant headlines"],"descriptions":["4 platform-compliant descriptions or primary texts"],"keywords":["12 high-intent terms, empty for Meta if unsuitable"],"negativeKeywords":["8 negatives for Google, empty for Meta"],"audiences":["4 audience segments with intent rationale"],"creativeConcepts":[{"name":"concept","hook":"opening hook","angle":"why it matters","visual":"specific visual direction","cta":"CTA"}],"landingPagePlan":["ordered page sections"],"bidStrategy":"phased bidding approach","adSchedule":"schedule and rationale","measurement":["events and attribution checks"],"experiments":["3 controlled tests with variable and success signal"],"estimatedResults":"planning range with explicit assumptions","quickWins":["3 first actions"]}';
     requestAnthropic(prompt, 1800, 'campaign')
-      .then(function(d) {
-        if (d.error) throw new Error(d.error.message);
-        var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
-        return JSON.parse(txt.replace(/```json|```/g, '').trim());
-      })
+      .then(parseModelJson)
       .then(function(parsed) { setBuilt(parsed); setSaved(function(prev) { return prev.concat([{id:Date.now(), co:sel, platform:platform, data:parsed}]); }); })
       .catch(function(error) { setCampaignError(error.message || 'Campaign generation failed.'); })
       .finally(function() { setBuilding(false); });
