@@ -1685,6 +1685,58 @@ function getMockEmail(co, tone, type) {
 
 // ─── WEBSITE BUILDER PAGE ─────────────────────────────────────────────────────
 
+function buildWebsiteFromBlueprint(bp, facts) {
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+    });
+  }
+  function color(value, fallback) {
+    return /^#[0-9a-f]{6}$/i.test(String(value || '')) ? value : fallback;
+  }
+  function font(value, fallback) {
+    var name = String(value || '').toLowerCase();
+    if (name.indexOf('serif') > -1) return 'Georgia, "Times New Roman", serif';
+    if (name.indexOf('mono') > -1) return '"SFMono-Regular", Consolas, monospace';
+    return fallback;
+  }
+  var services = (facts.services || []).slice(0, 6);
+  var blurbs = bp.serviceBlurbs || [];
+  var serviceHtml = services.map(function(service, i) {
+    return '<article class="service"><span>0' + (i + 1) + '</span><h3>' + esc(service) + '</h3><p>' +
+      esc(blurbs[i] || ('Learn more about ' + service + ' and how the team can help.')) + '</p></article>';
+  }).join('');
+  var phone = facts.phone && facts.phone !== 'Not provided' ? String(facts.phone) : '';
+  var email = facts.email && facts.email !== 'Not provided' ? String(facts.email) : '';
+  var ctaHref = phone ? 'tel:' + phone.replace(/[^\d+]/g, '') : '#contact';
+  var bg = color(bp.backgroundColor, '#f4f1ea');
+  var surface = color(bp.surfaceColor, '#ffffff');
+  var text = color(bp.textColor, '#171717');
+  var accent = color(bp.accentColor, '#126b5b');
+  var accentText = color(bp.accentTextColor, '#ffffff');
+  var displayFont = font(bp.displayFont, 'Georgia, "Times New Roman", serif');
+  var bodyFont = font(bp.bodyFont, 'Arial, Helvetica, sans-serif');
+  var schema = {'@context':'https://schema.org','@type':'LocalBusiness',name:facts.name,address:facts.address || undefined,telephone:phone || undefined,email:email || undefined};
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>' + esc(bp.metaTitle) + '</title><meta name="description" content="' + esc(bp.metaDescription) + '">' +
+    '<meta property="og:title" content="' + esc(bp.metaTitle) + '"><meta property="og:description" content="' + esc(bp.metaDescription) + '">' +
+    '<script type="application/ld+json">' + JSON.stringify(schema).replace(/</g, '\\u003c') + '<\/script><style>' +
+    ':root{--bg:' + bg + ';--surface:' + surface + ';--text:' + text + ';--accent:' + accent + ';--accentText:' + accentText + ';--display:' + displayFont + ';--body:' + bodyFont + '}' +
+    '*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);line-height:1.6}a{color:inherit}.wrap{width:min(1120px,calc(100% - 40px));margin:auto}' +
+    'nav{height:72px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid color-mix(in srgb,var(--text) 14%,transparent)}nav strong{font-family:var(--display);font-size:1.2rem}.navlinks{display:flex;gap:24px;align-items:center}.navlinks a{text-decoration:none;font-size:.9rem}.button{display:inline-flex;align-items:center;justify-content:center;background:var(--accent);color:var(--accentText);padding:13px 20px;text-decoration:none;font-weight:700;border:0}' +
+    '.hero{min-height:620px;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr);align-items:center;gap:64px;padding:72px 0}.eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:.72rem;font-weight:800;color:var(--accent)}h1,h2,h3{font-family:var(--display);line-height:1.05;margin:0}h1{font-size:clamp(3rem,8vw,7rem);max-width:900px;margin:16px 0 24px}h2{font-size:clamp(2.2rem,5vw,4.4rem)}.hero p{font-size:1.12rem;max-width:650px;margin:0 0 30px}.hero-note{align-self:end;border-top:4px solid var(--accent);padding-top:20px;font-size:.9rem}' +
+    'section{padding:96px 0}.section-head{display:grid;grid-template-columns:.7fr 1.3fr;gap:40px;align-items:end;margin-bottom:48px}.services{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid color-mix(in srgb,var(--text) 18%,transparent)}.service{padding:28px 24px 32px 0;border-bottom:1px solid color-mix(in srgb,var(--text) 18%,transparent)}.service span{color:var(--accent);font-size:.75rem;font-weight:800}.service h3{font-size:1.45rem;margin:18px 0 10px}.service p{margin:0;font-size:.94rem}' +
+    '.trust{background:var(--text);color:var(--bg)}.trust-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:72px;align-items:center}.rating{font-family:var(--display);font-size:clamp(5rem,12vw,10rem);line-height:.8;color:var(--accent)}.local{display:grid;grid-template-columns:1fr 1fr;gap:64px}.contact{background:var(--accent);color:var(--accentText);text-align:center}.contact h2{max-width:850px;margin:0 auto 24px}.contact p{max-width:650px;margin:0 auto 32px}.contact .button{background:var(--surface);color:var(--text)}footer{padding:28px 0;font-size:.82rem}.footer-row{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}' +
+    '@media(max-width:800px){.navlinks a:not(.button){display:none}.hero,.section-head,.trust-grid,.local{grid-template-columns:1fr}.hero{min-height:auto;padding:64px 0}.services{grid-template-columns:1fr 1fr}section{padding:72px 0}}@media(max-width:520px){.wrap{width:min(100% - 28px,1120px)}h1{font-size:3rem}.services{grid-template-columns:1fr}.hero{gap:36px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}:focus-visible{outline:3px solid var(--accent);outline-offset:4px}' +
+    '</style></head><body><nav class="wrap"><strong>' + esc(facts.name) + '</strong><div class="navlinks"><a href="#services">Services</a><a href="#about">About</a><a class="button" href="' + esc(ctaHref) + '">' + esc(bp.primaryCta) + '</a></div></nav>' +
+    '<main><header class="hero wrap"><div><div class="eyebrow">' + esc(bp.eyebrow) + '</div><h1>' + esc(bp.heroTitle) + '</h1><p>' + esc(bp.heroBody) + '</p><a class="button" href="' + esc(ctaHref) + '">' + esc(bp.primaryCta) + '</a></div><aside class="hero-note"><strong>' + esc(bp.heroTreatment) + '</strong><p>' + esc(facts.address || facts.location || '') + '</p></aside></header>' +
+    '<section id="services"><div class="wrap"><div class="section-head"><h2>What we do</h2><p>' + esc(bp.servicesIntro) + '</p></div><div class="services">' + serviceHtml + '</div></div></section>' +
+    '<section class="trust" id="about"><div class="wrap trust-grid"><div><div class="eyebrow">' + esc(bp.trustTitle) + '</div><h2>' + esc(bp.trustBody) + '</h2></div><div>' + (facts.rating ? '<div class="rating">' + esc(facts.rating) + '</div><p>Google rating from ' + esc(facts.reviewCount) + ' public reviews.</p>' : '<p>Local service, clear information, and a direct path to get in touch.</p>') + '</div></div></section>' +
+    '<section><div class="wrap local"><h2>' + esc(bp.localTitle) + '</h2><div><p>' + esc(bp.localBody) + '</p><p><strong>' + esc(facts.address || facts.location || '') + '</strong></p></div></div></section>' +
+    '<section class="contact" id="contact"><div class="wrap"><h2>' + esc(bp.contactTitle) + '</h2><p>' + esc(bp.contactBody) + '</p><a class="button" href="' + esc(ctaHref) + '">' + esc(bp.primaryCta) + '</a></div></section></main>' +
+    '<footer><div class="wrap footer-row"><span>&copy; ' + new Date().getFullYear() + ' ' + esc(facts.name) + '</span><span>' + esc(phone || email || facts.address || '') + '</span></div></footer></body></html>';
+}
+
 function WebsiteBuilderPage(props) {
   var done = props.done;
   var [sel, setSel] = useState(null);
@@ -1748,14 +1800,11 @@ function WebsiteBuilderPage(props) {
     var prompt = 'You are Claude Fable acting as a senior digital art director, UX strategist, conversion copywriter, and frontend engineer. Create an original, polished single-page website for the local business below.\n\nBUSINESS FACTS (do not invent facts):\n' + JSON.stringify(businessFacts, null, 2) + '\n\nCREATIVE DIRECTION:\n- Visual character: ' + styleDesc[style] + '.\n- Palette direction: ' + colorDesc[colorScheme] + '. Treat this as a starting direction, not a rigid template.\n- Infer the correct information hierarchy, emotional tone, trust strategy, and primary conversion action from the business type and available metadata.\n- Use current website metadata only to understand the business and identify weak messaging. Do not copy its layout, text, trade dress, or another brand.\n- Apply enduring high-quality web design principles: decisive typography, restrained color, purposeful imagery, strong rhythm, accessible contrast, clear navigation, and one dominant CTA.\n- Make the design feel specific to this business. Avoid generic AI gradients, floating blobs, excessive cards, fake dashboards, and repetitive feature tiles.\n\nCONTENT RULES:\n- Never fabricate testimonials, awards, staff biographies, years in business, prices, certifications, guarantees, or service claims.\n- Verified rating and review count may be used exactly as supplied, but do not quote reviews that were not supplied.\n- When a fact is missing, omit it or write neutral conversion copy that does not imply the fact.\n- Use the real phone, address, hours, services, and website metadata where available.\n\nBUILD REQUIREMENTS:\n- Return a complete standalone HTML5 document with embedded CSS and minimal vanilla JavaScript.\n- Responsive and polished at 375px, 768px, 1280px, and 1440px.\n- Use semantic HTML, visible keyboard focus, accessible labels, reduced-motion support, and WCAG-conscious contrast.\n- Include a compact navigation, business-specific hero, services, trust/reputation section, useful local content, contact/booking CTA, and footer.\n- Include SEO title/description, canonical-ready metadata, Open Graph metadata, and accurate Schema.org LocalBusiness JSON-LD using only supplied facts.\n- Use CSS variables and a coherent type scale. Prevent overflow and layout shift.\n- No external JavaScript libraries. Google Fonts are optional. Use remote images only when they are stable Unsplash source URLs relevant to the actual business category; otherwise use elegant CSS composition and clearly labeled image placeholders.\n- Ensure all buttons and links work. Telephone links must use tel:, email links mailto:, and navigation links anchor to real sections.\n\nQUALITY GATE:\nBefore answering, internally review the page for factual accuracy, visual distinctiveness, mobile layout, accessibility, conversion clarity, and broken HTML. Fix weak areas.\n\nReturn ONLY the HTML document. Begin with <!DOCTYPE html>.';
 
     try {
-      prompt += '\n\nOUTPUT LIMIT: The complete document must be under 14,000 characters. Emit <!DOCTYPE html>, <html>, a concise <head>, and <body> immediately. Use compact CSS, no code comments, no repeated copy, and minimal JavaScript. Include the complete body and </body></html> within the response.';
-      var d = await requestAnthropic(prompt, 4000, 'website');
+      prompt = 'You are Claude Fable acting as a senior digital art director, brand designer, UX strategist, and conversion copywriter. Create a distinctive design blueprint for this local business.\n\nBUSINESS FACTS (never invent facts):\n' + JSON.stringify(businessFacts, null, 2) + '\n\nDIRECTION:\n- Requested character: ' + styleDesc[style] + '.\n- Palette starting point: ' + colorDesc[colorScheme] + '.\n- Use metadata only as research; do not copy the existing site or another brand.\n- Make the hierarchy, voice, palette, typography, hero treatment, and section rhythm specific to this business category and location.\n- Avoid generic AI gradients, blobs, fake testimonials, fake awards, unsupported claims, prices, guarantees, and invented history.\n- Use valid six-digit hex colors. displayFont and bodyFont must each be one of: serif, sans-serif, monospace.\n- serviceBlurbs must align in order with the supplied services and stay factual.\n- Keep copy concise, vivid, useful, and conversion-oriented.\n\nReturn ONLY the structured JSON requested by the API schema.';
+      var d = await requestAnthropic(prompt, 2200, 'website');
       if (d.error) throw new Error(d.error.message);
-      var html = (d.content || []).map(function(b) { return b.text || ''; }).join('');
-      var start = html.indexOf('<!DOCTYPE');
-      if (start === -1) start = html.indexOf('<html');
-      if (start > -1) html = html.slice(start);
-      if (!/<html[\s>]/i.test(html) || !/<body[\s>]/i.test(html)) throw new Error('The model did not return a complete HTML document.');
+      var blueprint = parseModelJson(d);
+      var html = buildWebsiteFromBlueprint(blueprint, businessFacts);
       setGenerationModel(d.leadscout && d.leadscout.usedModel ? d.leadscout.usedModel : (d.model || 'Claude'));
       setBuilt(html);
     } catch (error) {

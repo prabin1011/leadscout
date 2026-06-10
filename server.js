@@ -373,6 +373,42 @@ const ANTHROPIC_OUTPUT_SCHEMAS = {
       'estimatedResults', 'quickWins'
     ],
     additionalProperties: false
+  },
+  website: {
+    type: 'object',
+    properties: {
+      metaTitle: { type: 'string' },
+      metaDescription: { type: 'string' },
+      eyebrow: { type: 'string' },
+      heroTitle: { type: 'string' },
+      heroBody: { type: 'string' },
+      primaryCta: { type: 'string' },
+      servicesIntro: { type: 'string' },
+      serviceBlurbs: ANTHROPIC_STRING_ARRAY,
+      trustTitle: { type: 'string' },
+      trustBody: { type: 'string' },
+      localTitle: { type: 'string' },
+      localBody: { type: 'string' },
+      contactTitle: { type: 'string' },
+      contactBody: { type: 'string' },
+      backgroundColor: { type: 'string' },
+      surfaceColor: { type: 'string' },
+      textColor: { type: 'string' },
+      accentColor: { type: 'string' },
+      accentTextColor: { type: 'string' },
+      displayFont: { type: 'string' },
+      bodyFont: { type: 'string' },
+      heroTreatment: { type: 'string' },
+      sectionRhythm: { type: 'string' }
+    },
+    required: [
+      'metaTitle', 'metaDescription', 'eyebrow', 'heroTitle', 'heroBody',
+      'primaryCta', 'servicesIntro', 'serviceBlurbs', 'trustTitle', 'trustBody',
+      'localTitle', 'localBody', 'contactTitle', 'contactBody', 'backgroundColor',
+      'surfaceColor', 'textColor', 'accentColor', 'accentTextColor', 'displayFont',
+      'bodyFont', 'heroTreatment', 'sectionRhythm'
+    ],
+    additionalProperties: false
   }
 };
 
