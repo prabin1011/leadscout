@@ -1203,32 +1203,19 @@ function SearchPage(props) {
       {id:'profile', logs:T.profile, p0:74, p1:88},
       {id:'scorer',  logs:T.scorer,  p0:88, p1:100},
     ];
-    var cursor = 200;
-    order.forEach(function(item) {
-      (function(it, cur) {
-        var tid = setTimeout(function() { setAS(it.id, 'running'); }, cur);
-        timers.current.push(tid);
-        if (it.id === 'meta') {
-          var verifyTid = setTimeout(function() {
-            verifyMetaAdsForCompanies(COMPANIES, locVal, addLog, refreshData);
-          }, cur + 450);
-          timers.current.push(verifyTid);
-        }
-        it.logs.forEach(function(l, i) {
-          var tid2 = setTimeout(function() {
-            addLog(l);
-            setProg(Math.round(it.p0 + ((it.p1 - it.p0) * (i + 1) / it.logs.length)));
-          }, cur + 300 + i * 700);
-          timers.current.push(tid2);
-        });
-        var endCur = cur + 300 + it.logs.length * 700 + 300;
-        var tid3 = setTimeout(function() { setAS(it.id, 'done'); }, endCur);
-        timers.current.push(tid3);
-      })(item, cursor);
-      cursor += 300 + item.logs.length * 700 + 700;
-    });
-    var finTid = setTimeout(function() { setRunning(false); setDone(true); props.onDone(); }, cursor + 300);
-    timers.current.push(finTid);
+    for (var orderIndex = 0; orderIndex < order.length; orderIndex++) {
+      var item = order[orderIndex];
+      setAS(item.id, 'running');
+      if (item.id === 'meta') {
+        await verifyMetaAdsForCompanies(COMPANIES, locVal || kwVal, addLog, refreshData);
+      }
+      item.logs.forEach(addLog);
+      setProg(item.p1);
+      setAS(item.id, 'done');
+    }
+    setRunning(false);
+    setDone(true);
+    props.onDone();
   }
 
   var filtered = COMPANIES.filter(function(co) {
