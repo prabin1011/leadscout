@@ -9,7 +9,69 @@ function modelForTask(task) {
   return process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 }
 
-async function createMessage(apiKey, model, prompt, maxTokens) {
+const STRING_ARRAY = { type: 'array', items: { type: 'string' } };
+const OUTPUT_SCHEMAS = {
+  outreach: {
+    type: 'object',
+    properties: {
+      subject: { type: 'string' },
+      body: { type: 'string' },
+      ps: { type: 'string' }
+    },
+    required: ['subject', 'body', 'ps'],
+    additionalProperties: false
+  },
+  campaign: {
+    type: 'object',
+    properties: {
+      campaignName: { type: 'string' },
+      objective: { type: 'string' },
+      strategySummary: { type: 'string' },
+      verifiedInputs: STRING_ARRAY,
+      hypotheses: STRING_ARRAY,
+      offer: { type: 'string' },
+      budgetSplit: { type: 'string' },
+      headlines: STRING_ARRAY,
+      descriptions: STRING_ARRAY,
+      keywords: STRING_ARRAY,
+      negativeKeywords: STRING_ARRAY,
+      audiences: STRING_ARRAY,
+      creativeConcepts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            hook: { type: 'string' },
+            angle: { type: 'string' },
+            visual: { type: 'string' },
+            cta: { type: 'string' }
+          },
+          required: ['name', 'hook', 'angle', 'visual', 'cta'],
+          additionalProperties: false
+        }
+      },
+      landingPagePlan: STRING_ARRAY,
+      bidStrategy: { type: 'string' },
+      adSchedule: { type: 'string' },
+      measurement: STRING_ARRAY,
+      experiments: STRING_ARRAY,
+      estimatedResults: { type: 'string' },
+      quickWins: STRING_ARRAY
+    },
+    required: [
+      'campaignName', 'objective', 'strategySummary', 'verifiedInputs', 'hypotheses',
+      'offer', 'budgetSplit', 'headlines', 'descriptions', 'keywords',
+      'negativeKeywords', 'audiences', 'creativeConcepts', 'landingPagePlan',
+      'bidStrategy', 'adSchedule', 'measurement', 'experiments',
+      'estimatedResults', 'quickWins'
+    ],
+    additionalProperties: false
+  }
+};
+
+async function createMessage(apiKey, model, prompt, maxTokens, task) {
+  const schema = OUTPUT_SCHEMAS[task];
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -20,7 +82,8 @@ async function createMessage(apiKey, model, prompt, maxTokens) {
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }]
+      messages: [{ role: 'user', content: prompt }],
+      ...(schema ? { output_config: { format: { type: 'json_schema', schema } } } : {})
     })
   });
   return { response, data: await response.json() };
@@ -53,11 +116,11 @@ module.exports = async function handler(req, res) {
 
   const model = modelForTask(task);
   try {
-    let result = await createMessage(apiKey, model, prompt, maxTokens);
+    let result = await createMessage(apiKey, model, prompt, maxTokens, task);
     let fallback = false;
     const fallbackModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
     if (task === 'website' && !result.response.ok && model !== fallbackModel && [400, 404].includes(result.response.status)) {
-      result = await createMessage(apiKey, fallbackModel, prompt, maxTokens);
+      result = await createMessage(apiKey, fallbackModel, prompt, maxTokens, task);
       fallback = true;
     }
     return sendJson(res, result.response.status, {

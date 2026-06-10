@@ -325,6 +325,67 @@ async function handleMetaAds(req, res, url) {
   }
 }
 
+const ANTHROPIC_STRING_ARRAY = { type: 'array', items: { type: 'string' } };
+const ANTHROPIC_OUTPUT_SCHEMAS = {
+  outreach: {
+    type: 'object',
+    properties: {
+      subject: { type: 'string' },
+      body: { type: 'string' },
+      ps: { type: 'string' }
+    },
+    required: ['subject', 'body', 'ps'],
+    additionalProperties: false
+  },
+  campaign: {
+    type: 'object',
+    properties: {
+      campaignName: { type: 'string' },
+      objective: { type: 'string' },
+      strategySummary: { type: 'string' },
+      verifiedInputs: ANTHROPIC_STRING_ARRAY,
+      hypotheses: ANTHROPIC_STRING_ARRAY,
+      offer: { type: 'string' },
+      budgetSplit: { type: 'string' },
+      headlines: ANTHROPIC_STRING_ARRAY,
+      descriptions: ANTHROPIC_STRING_ARRAY,
+      keywords: ANTHROPIC_STRING_ARRAY,
+      negativeKeywords: ANTHROPIC_STRING_ARRAY,
+      audiences: ANTHROPIC_STRING_ARRAY,
+      creativeConcepts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            hook: { type: 'string' },
+            angle: { type: 'string' },
+            visual: { type: 'string' },
+            cta: { type: 'string' }
+          },
+          required: ['name', 'hook', 'angle', 'visual', 'cta'],
+          additionalProperties: false
+        }
+      },
+      landingPagePlan: ANTHROPIC_STRING_ARRAY,
+      bidStrategy: { type: 'string' },
+      adSchedule: { type: 'string' },
+      measurement: ANTHROPIC_STRING_ARRAY,
+      experiments: ANTHROPIC_STRING_ARRAY,
+      estimatedResults: { type: 'string' },
+      quickWins: ANTHROPIC_STRING_ARRAY
+    },
+    required: [
+      'campaignName', 'objective', 'strategySummary', 'verifiedInputs', 'hypotheses',
+      'offer', 'budgetSplit', 'headlines', 'descriptions', 'keywords',
+      'negativeKeywords', 'audiences', 'creativeConcepts', 'landingPagePlan',
+      'bidStrategy', 'adSchedule', 'measurement', 'experiments',
+      'estimatedResults', 'quickWins'
+    ],
+    additionalProperties: false
+  }
+};
+
 async function handleAnthropic(req, res) {
   if (req.method !== 'POST') {
     return sendJson(res, 405, { ok: false, reason: 'method_not_allowed' });
@@ -357,6 +418,7 @@ async function handleAnthropic(req, res) {
       : task === 'campaign'
         ? (process.env.CAMPAIGN_MODEL || defaultModel)
         : defaultModel;
+    const outputSchema = ANTHROPIC_OUTPUT_SCHEMAS[task];
     async function createMessage(model) {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -368,7 +430,12 @@ async function handleAnthropic(req, res) {
         body: JSON.stringify({
           model,
           max_tokens: maxTokens,
-          messages: [{ role: 'user', content: prompt }]
+          messages: [{ role: 'user', content: prompt }],
+          ...(outputSchema ? {
+            output_config: {
+              format: { type: 'json_schema', schema: outputSchema }
+            }
+          } : {})
         })
       });
       return { response, data: await response.json(), model };

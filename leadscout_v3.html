@@ -1600,7 +1600,8 @@ function OutreachPage(props) {
 
   function copyEmail() {
     if (!result) return;
-    var t = (result.subject ? 'Subject: ' + result.subject + '\n\n' : '') + result.body + (result.ps ? '\n\nP.S. ' + result.ps : '');
+    var cleanPs = String(result.ps || '').replace(/^P\.?\s*S\.?\s*[-:]\s*/i, '');
+    var t = (result.subject ? 'Subject: ' + result.subject + '\n\n' : '') + result.body + (cleanPs ? '\n\nP.S. ' + cleanPs : '');
     navigator.clipboard && navigator.clipboard.writeText(t).catch(function(){});
     setCopied(true); setTimeout(function() { setCopied(false); }, 2200);
   }
@@ -1665,7 +1666,7 @@ function OutreachPage(props) {
                 React.createElement('div', {style: label({marginBottom:4})}, 'SUBJECT LINE'),
                 React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)'}}, result.subject)),
               React.createElement('div', {style:{background:'var(--bg3)', borderRadius:8, padding:14, lineHeight:1.8, fontSize:13, color:'var(--tx2)', whiteSpace:'pre-wrap'}}, result.body),
-              result.ps && result.ps.length > 0 && React.createElement('div', {style:{marginTop:10, padding:'10px 12px', background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:8, fontSize:12, color:'var(--am)'}}, '\uD83D\uDCA1 P.S. - ' + result.ps)))));
+              result.ps && result.ps.length > 0 && React.createElement('div', {style:{marginTop:10, padding:'10px 12px', background:'var(--am2)', border:'1px solid var(--am3)', borderRadius:8, fontSize:12, color:'var(--am)'}}, '\uD83D\uDCA1 P.S. - ' + String(result.ps).replace(/^P\.?\s*S\.?\s*[-:]\s*/i, ''))))));
 }
 
 function getMockEmail(co, tone, type) {
@@ -1879,7 +1880,7 @@ function CampaignsPage(props) {
       ? ('Current Google: ' + (sel.googleSource === 'not_connected' ? 'status unknown; manual verification required' : (sel.gads ? ('running signal (score ' + sel.gs + '/100)') : 'no signal detected')) + '\nDetected keywords: ' + (sel.gkw.length ? sel.gkw.join(', ') : 'none'))
       : ('Current Meta: ' + (sel.metaSource !== 'verified' ? 'status unknown; API verification unavailable or inconclusive' : (sel.mads ? ('verified records found (score ' + sel.ms + '/100)') : 'verified query returned no records')));
     var prompt = 'You are a senior performance creative strategist building a commercially credible ' + (platform==='google'?'Google Ads':'Meta Ads') + ' campaign. Think through market intent, customer anxieties, offers, proof, funnel stage, creative fatigue, landing-page continuity, measurement, and budget constraints before writing.\n\nVERIFIED BUSINESS DATA:\n' + JSON.stringify({name:sel.name,type:sel.type,location:sel.suburb,address:sel.address,services:sel.cats,rating:sel.rating,reviewCount:sel.reviews,website:sel.website || null,phone:sel.phone}, null, 2) + '\n\nWORKING INTELLIGENCE (some fields are estimates and must be labeled as hypotheses):\nGoal: ' + goal + '\nMonthly budget AUD: ' + budget + '\nOpportunity note: ' + sel.insight + '\nPitch angle: ' + sel.angle + '\n' + gInfo + '\n\nSTRATEGY RULES:\n- Do not invent discounts, prices, guarantees, accreditations, conversion rates, or competitor facts.\n- Separate verified facts from strategic hypotheses.\n- Make creative specific to this business category and local buyer intent; avoid generic phrases such as "quality service" and "we care".\n- Google headlines must be 30 characters or fewer and descriptions 90 characters or fewer. Meta copy should include distinct hooks for pain, aspiration, proof, and objection handling.\n- Forecasts must be presented as planning ranges with assumptions, never promises.\n- Include measurement events and a testing plan that can identify why performance changes.\n\nRespond ONLY with valid JSON using this schema:\n{"campaignName":"specific name","objective":"measurable objective","strategySummary":"3-5 sentence strategic rationale","verifiedInputs":["facts used"],"hypotheses":["assumptions to validate"],"offer":"credible offer or CTA without fabricated claims","budgetSplit":"allocation with amounts and percentages","headlines":["8 platform-compliant headlines"],"descriptions":["4 platform-compliant descriptions or primary texts"],"keywords":["12 high-intent terms, empty for Meta if unsuitable"],"negativeKeywords":["8 negatives for Google, empty for Meta"],"audiences":["4 audience segments with intent rationale"],"creativeConcepts":[{"name":"concept","hook":"opening hook","angle":"why it matters","visual":"specific visual direction","cta":"CTA"}],"landingPagePlan":["ordered page sections"],"bidStrategy":"phased bidding approach","adSchedule":"schedule and rationale","measurement":["events and attribution checks"],"experiments":["3 controlled tests with variable and success signal"],"estimatedResults":"planning range with explicit assumptions","quickWins":["3 first actions"]}';
-    requestAnthropic(prompt, 1800, 'campaign')
+    requestAnthropic(prompt, 3200, 'campaign')
       .then(parseModelJson)
       .then(function(parsed) { setBuilt(parsed); setSaved(function(prev) { return prev.concat([{id:Date.now(), co:sel, platform:platform, data:parsed}]); }); })
       .catch(function(error) { setCampaignError(error.message || 'Campaign generation failed.'); })
