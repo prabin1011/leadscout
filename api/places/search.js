@@ -4,6 +4,7 @@ const {
   consumeDailyPlacesRequest,
   getCache,
   methodNotAllowed,
+  normalizePlacesQuery,
   rateLimit,
   sanitizeQuery,
   sendJson,
@@ -38,16 +39,22 @@ module.exports = async function handler(req, res) {
     }, rateHeaders);
   }
 
-  const keyword = sanitizeQuery(req.body?.keyword, 100);
+  const query = sanitizeQuery(req.body?.query, 180);
+  const keyword = sanitizeQuery(req.body?.keyword, 180);
   const location = sanitizeQuery(req.body?.location, 120);
   const count = Math.max(1, Math.min(Number(req.body?.count || 12), 20));
   const regionCode = sanitizeQuery(req.body?.regionCode, 2).toUpperCase();
-  if (!keyword || !location) {
-    return sendJson(res, 400, { ok: false, reason: 'missing_query', message: 'Keyword and location are required.' }, rateHeaders);
+  const pageToken = sanitizeQuery(req.body?.pageToken, 1000);
+  const textQuery = normalizePlacesQuery({ query, keyword, location });
+  if (!textQuery) {
+    return sendJson(res, 400, {
+      ok: false,
+      reason: 'missing_query',
+      message: 'Enter a business, category, service, address, or natural-language Maps search.'
+    }, rateHeaders);
   }
 
-  const textQuery = `${keyword} in ${location}`;
-  const cacheKey = stableCacheKey({ textQuery: textQuery.toLowerCase(), count, regionCode });
+  const cacheKey = stableCacheKey({ textQuery: textQuery.toLowerCase(), count, regionCode, pageToken });
   const cached = await getCache(cacheKey);
   if (cached) return sendJson(res, 200, { ...cached, cached: true }, rateHeaders);
 
@@ -82,13 +89,15 @@ module.exports = async function handler(req, res) {
           'places.userRatingCount',
           'places.nationalPhoneNumber',
           'places.websiteUri',
-          'places.regularOpeningHours'
+          'places.regularOpeningHours',
+          'nextPageToken'
         ].join(',')
       },
       body: JSON.stringify({
         textQuery,
         pageSize: count,
         rankPreference: 'RELEVANCE',
+        ...(pageToken ? { pageToken } : {}),
         ...(regionCode ? { regionCode } : {})
       })
     });
@@ -110,6 +119,7 @@ module.exports = async function handler(req, res) {
       query: textQuery,
       count: Array.isArray(data.places) ? data.places.length : 0,
       places: data.places || [],
+      nextPageToken: data.nextPageToken || '',
       cached: false
     };
     await setCache(cacheKey, result);

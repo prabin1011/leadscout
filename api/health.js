@@ -13,6 +13,8 @@ module.exports = async function handler(req, res) {
     googlePlacesConfigured: Boolean(process.env.GOOGLE_MAPS_API_KEY),
     metaConfigured: Boolean(process.env.META_ACCESS_TOKEN),
     anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+    fableModel: process.env.FABLE_MODEL || 'claude-fable-5',
     metaApiVersion: META_API_VERSION,
     placesRateLimitPerMinute: PLACES_RATE_LIMIT,
     placesDailyLimit: PLACES_DAILY_LIMIT,

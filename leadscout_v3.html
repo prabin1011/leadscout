@@ -74,8 +74,8 @@ const AGENT_LIST = [
    desc:'Builds a local structured profile from verified Places fields and clearly marked estimates. AI generation is only used by separate tools when an API key is configured.',
    tech:['Local Data Mapping','Source Labels','Optional Claude'], out:['profile','sources','opportunities'], time:'local'},
   {id:'web',    name:'Website Auditor',  short:'Web',     icon:'WEB', color:'#22d3ee', cbg:'rgba(34,211,238,.1)',
-   desc:'Uses website presence from Google Places and currently estimates quality signals. PageSpeed, SSL and mobile-test links are provided for real verification.',
-   tech:['Places Website Field','Estimated Score','Verification Links'], out:['hasWebsite','estimatedGrade','verificationUrls'], time:'estimated'},
+   desc:'Uses website presence from Google Places and reads public page metadata before Fable generation. Performance grades remain estimates until Lighthouse is connected.',
+   tech:['Public Metadata Audit','Places Website Field','Fable Context'], out:['title','description','headings','schemaSignals'], time:'live on demand'},
   {id:'scorer', name:'Opportunity Scorer',short:'Scorer',  icon:'ZAP', color:'#f472b6', cbg:'rgba(244,114,182,.1)',
    desc:'Calculates an estimated local score from verified Places data plus clearly labeled ad and website assumptions. It is a prioritization aid, not a verified performance metric.',
    tech:['Weighted Scoring','Sentiment NLP','Market Signals','ML Ranker'], out:['opportunityScore','rank','priority'], time:'3-5s'},
@@ -83,9 +83,51 @@ const AGENT_LIST = [
 
 var COMPANIES = [];
 var API_BASE = window.location.origin;
+var STORAGE_KEYS = {
+  searchHistory:'leadscout.searchHistory.v1',
+  seenPlaces:'leadscout.seenPlaces.v1'
+};
+
+function readStoredJson(key, fallback) {
+  try {
+    var value = window.localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function writeStoredJson(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {}
+}
+
+function placeIdentity(place) {
+  if (place && place.id) return String(place.id);
+  var name = place && place.displayName && place.displayName.text ? place.displayName.text : '';
+  return (name + '|' + (place && place.formattedAddress || '')).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function saveSearchHistoryEntry(entry) {
+  var history = readStoredJson(STORAGE_KEYS.searchHistory, []);
+  var key = (entry.query + '|' + entry.location).toLowerCase();
+  history = history.filter(function(item) {
+    return (item.query + '|' + item.location).toLowerCase() !== key;
+  });
+  history.unshift(entry);
+  history = history.slice(0, 15);
+  writeStoredJson(STORAGE_KEYS.searchHistory, history);
+  return history;
+}
 
 function countryCodeFromLocation(loc) {
   var s = (loc || '').toLowerCase();
+  if (/nepal|kathmandu|pokhara|lalitpur|bhaktapur/.test(s)) return 'NP';
+  if (/india|delhi|mumbai|bangalore|bengaluru|chennai|kolkata|hyderabad/.test(s)) return 'IN';
+  if (/uae|united arab emirates|dubai|abu dhabi/.test(s)) return 'AE';
+  if (/singapore/.test(s)) return 'SG';
+  if (/japan|tokyo|osaka|kyoto/.test(s)) return 'JP';
   if (/uk|united kingdom|england|london|manchester|birmingham/.test(s)) return 'GB';
   if (/italy|rome|milan|italia/.test(s)) return 'IT';
   if (/france|paris/.test(s)) return 'FR';
@@ -94,7 +136,8 @@ function countryCodeFromLocation(loc) {
   if (/united states|usa|new york|los angeles|chicago|miami|austin|dallas/.test(s)) return 'US';
   if (/canada|toronto|vancouver/.test(s)) return 'CA';
   if (/new zealand|auckland|wellington/.test(s)) return 'NZ';
-  return 'AU';
+  if (/australia|sydney|melbourne|brisbane|perth|adelaide|canberra/.test(s)) return 'AU';
+  return '';
 }
 
 function safeConnectorFetch(path, options) {
@@ -110,11 +153,11 @@ function safeConnectorFetch(path, options) {
   });
 }
 
-function requestAnthropic(prompt, maxTokens) {
+function requestAnthropic(prompt, maxTokens, task) {
   return safeConnectorFetch('/api/anthropic/messages', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({prompt:prompt, maxTokens:maxTokens})
+    body:JSON.stringify({prompt:prompt, maxTokens:maxTokens, task:task || 'general'})
   });
 }
 
@@ -123,11 +166,11 @@ function verifyMetaAdsForCompanies(companies, loc, onLog, onUpdate) {
   return safeConnectorFetch('/api/health').then(function(health) {
     if (!health || !health.metaConfigured) {
       companies.forEach(function(co) {
-        co.metaSource = 'estimated';
+        co.metaSource = 'not_connected';
         co.metaStatus = 'needs_token';
         co.metaCoverageNote = 'Meta connector is ready, but META_ACCESS_TOKEN is not set on the local backend.';
       });
-      onLog({t:'warn', m:'[META ADS] Backend connector ready, but no META_ACCESS_TOKEN found. Keeping Meta results as estimates.'});
+      onLog({t:'warn', m:'[META ADS] No META_ACCESS_TOKEN found. Meta advertising status remains unknown.'});
       onUpdate();
       return;
     }
@@ -144,7 +187,7 @@ function verifyMetaAdsForCompanies(companies, loc, onLog, onUpdate) {
           body: JSON.stringify({name:co.name, country:country, limit:8})
         }).then(function(data) {
           co.metaStatus = data.ok ? 'verified' : 'api_limited';
-          co.metaSource = data.ok ? 'verified' : 'estimated';
+          co.metaSource = data.ok ? 'verified' : 'not_verified';
           co.metaVerified = !!data.ok;
           co.metaApi = data;
           co.metaAdsCount = data.totalReturned || 0;
@@ -164,7 +207,7 @@ function verifyMetaAdsForCompanies(companies, loc, onLog, onUpdate) {
           onUpdate();
         }).catch(function(err) {
           co.metaStatus = 'connector_error';
-          co.metaSource = 'estimated';
+          co.metaSource = 'connector_error';
           co.metaCoverageNote = err.message;
           onLog({t:'warn', m:'[META ADS] ' + co.name + ': connector error - ' + err.message});
           onUpdate();
@@ -174,7 +217,7 @@ function verifyMetaAdsForCompanies(companies, loc, onLog, onUpdate) {
     return chain;
   }).catch(function(err) {
     companies.forEach(function(co) {
-      co.metaSource = 'estimated';
+      co.metaSource = 'connector_error';
       co.metaStatus = 'backend_offline';
       co.metaCoverageNote = err.message;
     });
@@ -363,6 +406,17 @@ function companiesFromGooglePlaces(places, kw, loc) {
     if (place.primaryType && typeName.toLowerCase() !== place.primaryType.replace(/_/g, ' ').toLowerCase()) {
       categories.push(place.primaryType.replace(/_/g, ' '));
     }
+    var opportunityScore = 30;
+    if (!website) opportunityScore += 35;
+    else if (seed.webScore < 60) opportunityScore += 20;
+    if (rating >= 4.5 && reviews >= 50) opportunityScore += 10;
+    if (reviews < 15) opportunityScore += 5;
+    opportunityScore = Math.min(95, opportunityScore);
+    var priority = opportunityScore >= 75 ? 'high' : opportunityScore >= 55 ? 'medium' : 'low';
+    var verifiedInsight = !website
+      ? 'Google Places does not list a website. This is a verified website-presence gap; advertising status is still unknown.'
+      : 'A website is listed in Google Places. Its metadata can be audited on demand; advertising status is still unknown until a connector verifies it.';
+    var verifiedAngle = !website ? 'Website and local conversion foundation' : 'Website metadata and conversion review';
 
     return Object.assign({}, seed, {
       id: place.id || 'google-' + i,
@@ -370,8 +424,8 @@ function companiesFromGooglePlaces(places, kw, loc) {
       name: displayName,
       av: avatar,
       type: typeName,
-      suburb: loc,
-      city: loc,
+      suburb: loc || (place.formattedAddress || '').split(',').slice(-2, -1)[0].trim() || 'Search area',
+      city: loc || 'Search area',
       rating: rating,
       reviews: reviews,
       phone: place.nationalPhoneNumber || 'Not provided',
@@ -385,6 +439,25 @@ function companiesFromGooglePlaces(places, kw, loc) {
       booking: false,
       rank: i + 1,
       visits: reviews ? Math.round(reviews * 4) : 0,
+      gads: false,
+      mads: false,
+      spend: 0,
+      gs: 0,
+      ms: 0,
+      gt: '',
+      gd: '',
+      gkw: [],
+      gtier: '',
+      mt: '',
+      md: '',
+      mobj: '',
+      mdur: '',
+      mtarg: '',
+      fatigue: false,
+      score: opportunityScore,
+      pri: priority,
+      insight: verifiedInsight,
+      angle: verifiedAngle,
       hasWebsite: Boolean(website),
       webScore: website ? seed.webScore : 0,
       webGrade: website ? seed.webGrade : 'none',
@@ -402,8 +475,9 @@ function companiesFromGooglePlaces(places, kw, loc) {
       businessStatus: place.businessStatus || 'BUSINESS_STATUS_UNSPECIFIED',
       mapsSource: 'verified',
       gmbSource: 'google_places',
-      googleSource: 'estimated',
-      metaSource: 'estimated',
+      googleSource: 'not_connected',
+      metaSource: 'not_checked',
+      metaStatus: 'not_checked',
       websiteSource: website ? 'google_places_presence' : 'google_places_no_website',
       scoreSource: 'estimated'
     });
@@ -412,10 +486,6 @@ function companiesFromGooglePlaces(places, kw, loc) {
 
 function getLogs(kw, loc, count) {
   var n = count || 12;
-  var rawN = Math.round(n * 2.2);
-  var adN = Math.round(n * 0.45 + n * 0.42);
-  var hiN = Math.max(1, Math.round(n * 0.28));
-  var spend = Math.round(n * 1250);
   return {
     maps: [
       {t:'info',    m:'[MAPS SCOUT] Querying Google Places API (New) for "' + kw + ' in ' + loc + '"...'},
@@ -426,18 +496,15 @@ function getLogs(kw, loc, count) {
       {t:'success', m:'[PLACES DETAILS] ' + n + ' business records mapped. Missing fields remain "Not provided".'},
     ],
     gads: [
-      {t:'info',    m:'[GOOGLE ADS] Generating estimated signals for ' + n + ' domains...'},
-      {t:'agent',   m:'[GOOGLE ADS] Estimated presence detected for ' + Math.round(n*0.45) + ' domains.'},
-      {t:'warn',    m:'[GOOGLE ADS] NOTE: Verify each domain at adstransparency.google.com for confirmed status'},
-      {t:'success', m:'[GOOGLE ADS] Estimates ready. No live Google Ads API data was used.'},
+      {t:'info',    m:'[GOOGLE ADS] Preparing Transparency Center verification links for ' + n + ' businesses...'},
+      {t:'warn',    m:'[GOOGLE ADS] No general live Google Ads connector is configured. Advertising status remains unknown.'},
+      {t:'success', m:'[GOOGLE ADS] Manual verification links ready. No advertiser presence or spend was fabricated.'},
     ],
     meta: [
       {t:'info',    m:'[META ADS] Connecting to Meta Ad Library API...'},
-      {t:'agent',   m:'[META ADS] Searching by BUSINESS NAME (page search) for each company...'},
-      {t:'agent',   m:'[META ADS] Estimated active pages found: ' + Math.round(n*0.42) + ' of ' + n + ' — requires page-level verification'},
-      {t:'agent',   m:'[META ADS] Analysing estimated creatives, objectives, targeting signals...'},
-      {t:'warn',    m:'[META ADS] NOTE: Use "Search Their Facebook Page" button to verify actual ad count'},
-      {t:'success', m:'[META ADS] Estimated Meta signals complete — verify live data per company'},
+      {t:'agent',   m:'[META ADS] Checking connector availability and supported market coverage...'},
+      {t:'warn',    m:'[META ADS] Without a conclusive API response, advertising status remains unknown.'},
+      {t:'success', m:'[META ADS] Public Ad Library verification links prepared for each business.'},
     ],
     profile: [
       {t:'info',    m:'[PROFILE BUILDER] Structuring ' + n + ' company profiles locally...'},
@@ -1004,6 +1071,7 @@ function SearchPage(props) {
   var [kw, setKw] = useState('');
   var [loc, setLoc] = useState('');
   var [count, setCount] = useState(12);
+  var [history, setHistory] = useState(function() { return readStoredJson(STORAGE_KEYS.searchHistory, []); });
   var [running, setRunning] = useState(false);
   var [done, setDone] = useState(false);
   var [agSt, setAgSt] = useState(AGENT_LIST.map(function(a) { return Object.assign({}, a, {status:'idle'}); }));
@@ -1014,6 +1082,9 @@ function SearchPage(props) {
   var [dataRev, setDataRev] = useState(0);
   var logRef = useRef(null);
   var timers = useRef([]);
+  var seenPlaces = useRef(new Set(readStoredJson(STORAGE_KEYS.seenPlaces, [])));
+  var lastQueryKey = useRef('');
+  var nextPageToken = useRef('');
 
   useEffect(function() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -1028,14 +1099,22 @@ function SearchPage(props) {
   function refreshData() {
     setDataRev(function(v) { return v + 1; });
   }
+  function useHistory(item) {
+    setKw(item.query || '');
+    setLoc(item.location || '');
+  }
+  function clearHistory() {
+    writeStoredJson(STORAGE_KEYS.searchHistory, []);
+    setHistory([]);
+  }
 
   async function launch() {
     if (running) return;
     var kwVal = kw.trim();
     var locVal = loc.trim();
     var cntVal = Math.max(1, Math.min(parseInt(count) || 12, 20));
-    if (!kwVal || !locVal) {
-      setLogs([{id:Date.now(), t:'warn', m:'[MAPS SCOUT] Enter both a keyword and location.'}]);
+    if (!kwVal) {
+      setLogs([{id:Date.now(), t:'warn', m:'[MAPS SCOUT] Enter a Maps-style search such as "dentists near Parramatta" or a business name.'}]);
       return;
     }
     setRunning(true); setDone(false); setLogs([]); setProg(0); setSel(null);
@@ -1044,34 +1123,74 @@ function SearchPage(props) {
     timers.current.forEach(clearTimeout);
     timers.current = [];
     setAS('maps', 'running');
-    addLog({t:'info', m:'[MAPS SCOUT] Searching Google Places for "' + kwVal + ' in ' + locVal + '"...'});
+    addLog({t:'info', m:'[MAPS SCOUT] Searching Google Places for "' + kwVal + (locVal ? ' in ' + locVal : '') + '"...'});
 
-    var placesResult;
+    var queryKey = (kwVal + '|' + locVal).toLowerCase().replace(/\s+/g, ' ').trim();
+    var continuing = queryKey === lastQueryKey.current && Boolean(nextPageToken.current);
+    var token = continuing ? nextPageToken.current : '';
+    var freshPlaces = [];
+    var duplicateCount = 0;
+    var placesResult = null;
     try {
-      placesResult = await safeConnectorFetch('/api/places/search', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({keyword:kwVal, location:locVal, count:cntVal, regionCode:countryCodeFromLocation(locVal)})
-      });
-      if (!placesResult || !placesResult.ok) {
-        throw new Error((placesResult && placesResult.message) || 'Google Places search failed.');
+      for (var pageAttempt = 0; pageAttempt < 3 && freshPlaces.length < cntVal; pageAttempt++) {
+        placesResult = await safeConnectorFetch('/api/places/search', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            query:kwVal,
+            location:locVal,
+            count:cntVal,
+            pageToken:token,
+            regionCode:countryCodeFromLocation(locVal || kwVal)
+          })
+        });
+        if (!placesResult || !placesResult.ok) {
+          throw new Error((placesResult && placesResult.message) || 'Google Places search failed.');
+        }
+        (placesResult.places || []).forEach(function(place) {
+          var identity = placeIdentity(place);
+          if (!identity || seenPlaces.current.has(identity) || freshPlaces.some(function(existing) { return placeIdentity(existing) === identity; })) {
+            duplicateCount += 1;
+          } else {
+            freshPlaces.push(place);
+          }
+        });
+        token = placesResult.nextPageToken || '';
+        if (!token) break;
       }
     } catch (error) {
       setAS('maps', 'idle');
       setRunning(false);
+      if (props.onStop) props.onStop();
       addLog({t:'warn', m:'[MAPS SCOUT] ' + error.message});
       addLog({t:'warn', m:'[MAPS SCOUT] No dummy results were substituted. Configure GOOGLE_MAPS_API_KEY on the backend and retry.'});
       return;
     }
 
-    COMPANIES = companiesFromGooglePlaces(placesResult.places || [], kwVal, locVal);
+    lastQueryKey.current = queryKey;
+    nextPageToken.current = token;
+    freshPlaces.slice(0, cntVal).forEach(function(place) {
+      seenPlaces.current.add(placeIdentity(place));
+    });
+    writeStoredJson(STORAGE_KEYS.seenPlaces, Array.from(seenPlaces.current).slice(-2000));
+    COMPANIES = companiesFromGooglePlaces(freshPlaces.slice(0, cntVal), kwVal, locVal);
+    setHistory(saveSearchHistoryEntry({
+      query:kwVal,
+      location:locVal,
+      resultCount:COMPANIES.length,
+      duplicatesSkipped:duplicateCount,
+      searchedAt:new Date().toISOString()
+    }));
     refreshData();
     setAS('maps', 'done');
     setProg(15);
-    addLog({t:'success', m:'[MAPS SCOUT] Google Places returned ' + COMPANIES.length + ' real businesses' + (placesResult.cached ? ' (cached)' : '') + '.'});
+    addLog({t:'success', m:'[MAPS SCOUT] ' + COMPANIES.length + ' new businesses returned' + (placesResult.cached ? ' (cached)' : '') + '.'});
+    if (duplicateCount) addLog({t:'info', m:'[MAPS SCOUT] Skipped ' + duplicateCount + ' places already seen in this browser.'});
+    if (nextPageToken.current) addLog({t:'info', m:'[MAPS SCOUT] More results are available. Run the same search again to continue.'});
     if (COMPANIES.length === 0) {
       setRunning(false);
-      addLog({t:'warn', m:'[MAPS SCOUT] No businesses matched this query. Try a broader keyword or location.'});
+      if (props.onStop) props.onStop();
+      addLog({t:'warn', m:'[MAPS SCOUT] No unseen businesses remain on the available result pages. Try a nearby area or a broader query.'});
       return;
     }
 
@@ -1131,10 +1250,16 @@ function SearchPage(props) {
       React.createElement('div', {style:{background:'var(--bg2)', border:'1px solid var(--br)', borderRadius:8, padding:compact ? 16 : 20, marginBottom:18}},
         React.createElement('div', {style: label({marginBottom:12})}, 'Market Query'),
         React.createElement('div', {style:{display:'flex', flexDirection:compact ? 'column' : 'row', gap:10, marginBottom:12}},
-          React.createElement('input', {value:kw, onChange:function(e){setKw(e.target.value);}, placeholder:'Keyword \u2014 restaurant, physio, law firm...', style:Object.assign({}, iStyle, {flex:1})}),
-          React.createElement('input', {value:loc, onChange:function(e){setLoc(e.target.value);}, placeholder:'Location \u2014 Sydney, Melbourne...', style:Object.assign({}, iStyle, {width:compact ? '100%' : 220})}),
+          React.createElement('input', {value:kw, onChange:function(e){setKw(e.target.value);}, onKeyDown:function(e){if(e.key==='Enter')launch();}, placeholder:'Search Maps \u2014 dentists near Parramatta, coffee open now...', style:Object.assign({}, iStyle, {flex:1})}),
+          React.createElement('input', {value:loc, onChange:function(e){setLoc(e.target.value);}, onKeyDown:function(e){if(e.key==='Enter')launch();}, placeholder:'Area (optional)', style:Object.assign({}, iStyle, {width:compact ? '100%' : 220})}),
           React.createElement('input', {type:'number', value:count, min:1, max:20, onChange:function(e){setCount(e.target.value);}, title:'Number of Google Places results (1-20)', style:Object.assign({}, iStyle, {width:compact ? '100%' : 82, textAlign:compact ? 'left' : 'center'})}),
-          React.createElement('button', {onClick:launch, disabled:running, style:{background: running ? 'var(--bg4)' : 'var(--ac)', border:'none', borderRadius:8, padding:'11px 22px', color: running ? 'var(--tx3)' : '#fff', fontSize:13, fontWeight:600, cursor: running ? 'not-allowed' : 'pointer', whiteSpace:'nowrap', fontFamily:'var(--fn)', transition:'all .2s'}}, running ? 'Scanning...' : 'Run Scan')),
+          React.createElement('button', {onClick:launch, disabled:running, style:{background: running ? 'var(--bg4)' : 'var(--ac)', border:'none', borderRadius:8, padding:'11px 22px', color: running ? 'var(--tx3)' : '#fff', fontSize:13, fontWeight:600, cursor: running ? 'not-allowed' : 'pointer', whiteSpace:'nowrap', fontFamily:'var(--fn)', transition:'all .2s'}}, running ? 'Scanning...' : (lastQueryKey.current === (kw.trim()+'|'+loc.trim()).toLowerCase().replace(/\s+/g,' ').trim() && nextPageToken.current ? 'Find New' : 'Run Scan'))),
+        history.length > 0 && React.createElement('div', {style:{display:'flex', alignItems:'center', gap:6, overflowX:'auto', paddingBottom:10}},
+          React.createElement('span', {style:{fontSize:10, color:'var(--tx3)', fontFamily:'var(--mo)', flexShrink:0}}, 'RECENT'),
+          history.slice(0, 6).map(function(item, index) {
+            return React.createElement('button', {key:item.searchedAt || index, onClick:function(){useHistory(item);}, title:(item.resultCount || 0) + ' new results', style:{background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:6, padding:'5px 8px', color:'var(--tx2)', fontSize:11, cursor:'pointer', whiteSpace:'nowrap'}}, item.query + (item.location ? ' \u00b7 ' + item.location : ''));
+          }),
+          React.createElement('button', {onClick:clearHistory, title:'Clear search history', style:{background:'transparent', border:'none', color:'var(--tx3)', fontSize:11, cursor:'pointer', padding:5}}, 'Clear')),
         React.createElement('div', {style:{height:3, background:'var(--br)', borderRadius:2, overflow:'hidden', marginBottom: logs.length ? 12 : 0}},
           React.createElement('div', {style:{height:'100%', background: done ? 'var(--gn)' : 'var(--ac)', borderRadius:2, width:prog+'%', transition:'width .6s ease'}})),
         logs.length > 0 && React.createElement('div', {ref:logRef, style:{background:'#03050a', border:'1px solid var(--br)', borderRadius:8, padding:'11px 13px', fontFamily:'var(--mo)', fontSize:11, lineHeight:1.9, maxHeight:160, overflowY:'auto', marginTop:12}},
@@ -1164,7 +1289,7 @@ function SearchPage(props) {
       !done && !running && React.createElement('div', {style:{textAlign:'center', padding:'60px 20px', color:'var(--tx3)'}},
         React.createElement('div', {style:{fontSize:11, fontFamily:'var(--mo)', letterSpacing:1, color:'var(--tx3)', marginBottom:12}}, 'READY'),
         React.createElement('div', {style:{fontSize:16, fontWeight:500, color:'var(--tx2)', marginBottom:8}}, 'Start a market scan'),
-        React.createElement('div', {style:{fontSize:13, lineHeight:1.7, maxWidth:380, margin:'0 auto'}}, 'Enter a keyword and location to profile local businesses across maps, ads, websites and outreach signals with ' + AGENT_LIST.length + ' workflow agents.'))),
+        React.createElement('div', {style:{fontSize:13, lineHeight:1.7, maxWidth:420, margin:'0 auto'}}, 'Search naturally as you would in Google Maps. Add an optional area, or include the place directly in the query.'))),
     sel && React.createElement(DetailPanel, {co:sel, onClose:function(){setSel(null);}, onEmail:props.onEmail, onCampaign:props.onCampaign, onBuildWebsite:props.onBuildWebsite}));
 }
 
@@ -1459,7 +1584,7 @@ function OutreachPage(props) {
     var typeMap = {cold_email:'cold outreach email', linkedin:'LinkedIn connection message (max 300 chars)', sms:'SMS text message (max 160 chars)', followup:'follow-up email after no response'};
     var toneMap = {professional:'professional and polished', friendly:'friendly and conversational', direct:'direct and bold', consultative:'consultative and insight-led'};
     var prompt = 'You are a top B2B sales copywriter. Write a ' + typeMap[type] + ' to ' + sel.name + ', a ' + sel.type + ' in ' + sel.suburb + ', Sydney Australia.\n\nINTELLIGENCE:\n- Google Ads: ' + (sel.gads ? 'Running (score: ' + sel.gs + '/100)' : 'NOT running - missing all search traffic') + '\n- Meta Ads: ' + (sel.mads ? 'Running (score: ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')' : 'NOT running - social audience untapped') + '\n- Maps rank: #' + sel.rank + '\n- Reviews: ' + sel.reviews + ' at ' + sel.rating + ' stars\n- Opportunity: ' + sel.insight + '\n- Angle: ' + sel.angle + '\n\nTONE: ' + toneMap[tone] + '\nBe specific about their actual situation. No generic phrases.\n\nRespond ONLY in valid JSON: {"subject":"email subject or empty string","body":"the full message","ps":"P.S. line or empty string"}';
-    requestAnthropic(prompt, 900)
+    requestAnthropic(prompt, 900, 'outreach')
       .then(function(d) {
         if (d.error) throw new Error(d.error.message);
         var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
@@ -1564,6 +1689,8 @@ function WebsiteBuilderPage(props) {
   var [built, setBuilt] = useState(null);
   var [preview, setPreview] = useState(false);
   var [copied, setCopied] = useState(false);
+  var [buildError, setBuildError] = useState('');
+  var [generationModel, setGenerationModel] = useState('');
 
   useEffect(function() {
     if (props.websiteTarget) { setSel(props.websiteTarget); props.setWebsiteTarget(null); setBuilt(null); }
@@ -1579,27 +1706,57 @@ function WebsiteBuilderPage(props) {
 
   var selSt = {width:'100%', background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:7, padding:'8px 11px', color:'var(--tx)', fontSize:13, fontFamily:'var(--fn)', outline:'none'};
 
-  function build() {
+  async function build() {
     if (!sel || building) return;
-    setBuilding(true); setBuilt(null); setPreview(false);
+    setBuilding(true); setBuilt(null); setPreview(false); setBuildError(''); setGenerationModel('');
     var styleDesc = {modern:'modern, clean, minimalist with strong CTAs', bold:'bold, high-contrast, impact-focused with large typography', elegant:'elegant, premium, sophisticated with refined spacing', local:'warm, local, community-focused with trust signals', medical:'clinical, trustworthy, professional with credibility markers'};
     var colorDesc = {professional:'navy, white, gold accents', vibrant:'bright coral, white, dark navy', natural:'sage green, cream, warm brown', dark:'charcoal, white, electric blue', warm:'warm orange, cream, deep burgundy'};
-    var prompt = 'You are an expert web developer. Create a complete, production-ready single-page HTML website for a real local business.\n\nBusiness: ' + sel.name + '\nType: ' + sel.type + '\nLocation: ' + sel.suburb + ', Sydney NSW\nPhone: ' + sel.phone + '\nEmail: ' + sel.email + '\nServices: ' + sel.cats.join(', ') + '\nFounded: ' + sel.founded + '\nHours: ' + sel.hours + '\nRating: ' + sel.rating + ' stars, ' + sel.reviews + ' reviews\nBooking: ' + (sel.booking ? 'Yes' : 'No') + '\n\nDESIGN: ' + styleDesc[style] + '\nCOLORS: ' + colorDesc[colorScheme] + '\n\nREQUIREMENTS:\n- Complete HTML5 page with embedded CSS and minimal JS\n- Mobile-responsive using CSS flexbox/grid\n- Hero section with headline, subheadline, CTA button\n- Services/features section (use their actual service categories)\n- About section with trust signals (founded year, reviews, team)\n- Testimonials section (3 realistic fake reviews)\n- Contact section with phone, email, address\n- Google Maps embed placeholder\n- Booking CTA if applicable\n- Proper meta tags for SEO\n- Schema.org LocalBusiness markup\n- Fast loading (no external dependencies except Google Fonts)\n\nReturn ONLY the complete HTML code, nothing else. Start with <!DOCTYPE html>.';
+    var audit = null;
 
-    requestAnthropic(prompt, 4000)
-      .then(function(d) {
-        if (d.error) throw new Error(d.error.message);
-        var html = (d.content || []).map(function(b) { return b.text || ''; }).join('');
-        // Extract just the HTML if there's any preamble
-        var start = html.indexOf('<!DOCTYPE');
-        if (start === -1) start = html.indexOf('<html');
-        if (start > -1) html = html.slice(start);
-        setBuilt(html);
-      })
-      .catch(function(e) {
-        setBuilt(getMockWebsite(sel, style, colorScheme));
-      })
-      .finally(function() { setBuilding(false); });
+    if (sel.website && sel.website !== 'Not provided') {
+      try {
+        audit = await safeConnectorFetch('/api/website/audit', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({url:/^https?:\/\//i.test(sel.website) ? sel.website : 'https://' + sel.website})
+        });
+      } catch (error) {
+        audit = {ok:false, note:'Existing website metadata could not be read: ' + error.message};
+      }
+    }
+
+    var businessFacts = {
+      name:sel.name,
+      type:sel.type,
+      location:sel.suburb,
+      address:sel.address,
+      phone:sel.phone,
+      email:sel.email,
+      services:sel.cats,
+      hours:sel.hours,
+      rating:sel.rating,
+      reviewCount:sel.reviews,
+      bookingKnown:sel.booking,
+      currentWebsite:sel.website || '',
+      currentWebsiteMetadata:audit
+    };
+    var prompt = 'You are Claude Fable acting as a senior digital art director, UX strategist, conversion copywriter, and frontend engineer. Create an original, polished single-page website for the local business below.\n\nBUSINESS FACTS (do not invent facts):\n' + JSON.stringify(businessFacts, null, 2) + '\n\nCREATIVE DIRECTION:\n- Visual character: ' + styleDesc[style] + '.\n- Palette direction: ' + colorDesc[colorScheme] + '. Treat this as a starting direction, not a rigid template.\n- Infer the correct information hierarchy, emotional tone, trust strategy, and primary conversion action from the business type and available metadata.\n- Use current website metadata only to understand the business and identify weak messaging. Do not copy its layout, text, trade dress, or another brand.\n- Apply enduring high-quality web design principles: decisive typography, restrained color, purposeful imagery, strong rhythm, accessible contrast, clear navigation, and one dominant CTA.\n- Make the design feel specific to this business. Avoid generic AI gradients, floating blobs, excessive cards, fake dashboards, and repetitive feature tiles.\n\nCONTENT RULES:\n- Never fabricate testimonials, awards, staff biographies, years in business, prices, certifications, guarantees, or service claims.\n- Verified rating and review count may be used exactly as supplied, but do not quote reviews that were not supplied.\n- When a fact is missing, omit it or write neutral conversion copy that does not imply the fact.\n- Use the real phone, address, hours, services, and website metadata where available.\n\nBUILD REQUIREMENTS:\n- Return a complete standalone HTML5 document with embedded CSS and minimal vanilla JavaScript.\n- Responsive and polished at 375px, 768px, 1280px, and 1440px.\n- Use semantic HTML, visible keyboard focus, accessible labels, reduced-motion support, and WCAG-conscious contrast.\n- Include a compact navigation, business-specific hero, services, trust/reputation section, useful local content, contact/booking CTA, and footer.\n- Include SEO title/description, canonical-ready metadata, Open Graph metadata, and accurate Schema.org LocalBusiness JSON-LD using only supplied facts.\n- Use CSS variables and a coherent type scale. Prevent overflow and layout shift.\n- No external JavaScript libraries. Google Fonts are optional. Use remote images only when they are stable Unsplash source URLs relevant to the actual business category; otherwise use elegant CSS composition and clearly labeled image placeholders.\n- Ensure all buttons and links work. Telephone links must use tel:, email links mailto:, and navigation links anchor to real sections.\n\nQUALITY GATE:\nBefore answering, internally review the page for factual accuracy, visual distinctiveness, mobile layout, accessibility, conversion clarity, and broken HTML. Fix weak areas.\n\nReturn ONLY the HTML document. Begin with <!DOCTYPE html>.';
+
+    try {
+      var d = await requestAnthropic(prompt, 4000, 'website');
+      if (d.error) throw new Error(d.error.message);
+      var html = (d.content || []).map(function(b) { return b.text || ''; }).join('');
+      var start = html.indexOf('<!DOCTYPE');
+      if (start === -1) start = html.indexOf('<html');
+      if (start > -1) html = html.slice(start);
+      if (!/<html[\s>]/i.test(html) || !/<body[\s>]/i.test(html)) throw new Error('The model did not return a complete HTML document.');
+      setGenerationModel(d.leadscout && d.leadscout.usedModel ? d.leadscout.usedModel : (d.model || 'Claude'));
+      setBuilt(html);
+    } catch (error) {
+      setBuildError(error.message || 'Website generation failed.');
+    } finally {
+      setBuilding(false);
+    }
   }
 
   function copyCode() {
@@ -1674,13 +1831,14 @@ function WebsiteBuilderPage(props) {
                   React.createElement('button', {onClick:downloadHtml, style:{padding:'9px 12px', background:'var(--bg3)', border:'1px solid var(--br2)', borderRadius:8, color:'var(--tx2)', fontSize:12, cursor:'pointer'}}, '\u2193 .html')))),
             !built && !building && React.createElement('div', {style:{flex:1, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:10, color:'var(--tx3)'}},
               React.createElement('div', {style:{fontSize:28, opacity:.4}}, '\uD83C\uDF10'),
-              React.createElement('div', {style:{fontSize:14, color:'var(--tx2)'}}, 'Configure options above and click Build Website')),
+              React.createElement('div', {style:{fontSize:14, color:buildError?'var(--am)':'var(--tx2)', maxWidth:520, textAlign:'center'}}, buildError || 'Configure options above and click Build Website'),
+              buildError && React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', maxWidth:520, textAlign:'center'}}, 'No static fallback was substituted. Check the Anthropic key, model access, or deployment logs and retry.')),
             building && React.createElement('div', {style:{flex:1, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, color:'var(--tx3)'}},
               React.createElement('div', {style:{fontSize:28, animation:'pulse 1.2s infinite'}},'\u2728'),
-              React.createElement('div', {style:{fontSize:14, color:'var(--ac2)', fontFamily:'var(--mo)'}}, 'Claude AI is building the website...'),
-              React.createElement('div', {style:{fontSize:12, color:'var(--tx3)'}}, 'Generating HTML, CSS, content & schema markup')),
+              React.createElement('div', {style:{fontSize:14, color:'var(--ac2)', fontFamily:'var(--mo)'}}, 'Fable is designing the website...'),
+              React.createElement('div', {style:{fontSize:12, color:'var(--tx3)'}}, 'Auditing metadata, shaping the art direction, and generating production HTML')),
             built && !preview && React.createElement('div', {style:{flex:1, overflow:'auto', background:'#0d1117', padding:16}},
-              React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', color:'var(--gn)', marginBottom:10}}, '\u26A1 CLAUDE AI — GENERATED WEBSITE CODE (' + Math.round(built.length/1000) + 'kb)'),
+              React.createElement('div', {style:{fontSize:10, fontFamily:'var(--mo)', color:'var(--gn)', marginBottom:10}}, '\u26A1 ' + (generationModel || 'CLAUDE') + ' - GENERATED WEBSITE CODE (' + Math.round(built.length/1000) + 'kb)'),
               React.createElement('pre', {style:{fontSize:11, color:'#a8b4c8', lineHeight:1.7, whiteSpace:'pre-wrap', fontFamily:'var(--mo)'}}, built)),
             built && preview && React.createElement('iframe', {srcDoc:built, style:{flex:1, border:'none', background:'#fff'}, title:'Website Preview'}))));
 }
@@ -1700,6 +1858,7 @@ function CampaignsPage(props) {
   var [building, setBuilding] = useState(false);
   var [built, setBuilt] = useState(null);
   var [saved, setSaved] = useState([]);
+  var [campaignError, setCampaignError] = useState('');
 
   useEffect(function() {
     if (props.campaignTarget) { setSel(props.campaignTarget.company); setPlatform(props.campaignTarget.platform); props.setCampaignTarget(null); }
@@ -1711,17 +1870,17 @@ function CampaignsPage(props) {
 
   function build() {
     if (!sel || building) return;
-    setBuilding(true); setBuilt(null);
+    setBuilding(true); setBuilt(null); setCampaignError('');
     var gInfo = platform === 'google' ? ('Current Google: ' + (sel.gads ? ('Running (score ' + sel.gs + '/100)') : 'NOT running') + '\nDetected keywords: ' + (sel.gkw.length ? sel.gkw.join(', ') : 'none')) : ('Current Meta: ' + (sel.mads ? ('Running (score ' + sel.ms + '/100, ' + (sel.fatigue ? 'FATIGUED' : 'fresh') + ')') : 'NOT running'));
-    var prompt = 'You are an expert digital marketing strategist. Create a detailed ' + (platform==='google'?'Google Ads':'Meta Ads') + ' campaign plan.\n\nBusiness: ' + sel.name + '\nType: ' + sel.type + '\nLocation: ' + sel.suburb + ', Sydney NSW\nGoal: ' + goal + '\nMonthly budget: AUD $' + budget + '\nKey insight: ' + sel.insight + '\n' + gInfo + '\n\nRespond ONLY with valid JSON: {"campaignName":"name","objective":"objective","budgetSplit":"how to allocate","headlines":["3 ad headlines under 30 chars"],"descriptions":["2 descriptions under 90 chars"],"keywords":["6 target keywords"],"audiences":["3 audience segments"],"bidStrategy":"bid strategy","adSchedule":"schedule","estimatedResults":"30-day projection","quickWins":["2 first actions"]}';
-    requestAnthropic(prompt, 900)
+    var prompt = 'You are a senior performance creative strategist building a commercially credible ' + (platform==='google'?'Google Ads':'Meta Ads') + ' campaign. Think through market intent, customer anxieties, offers, proof, funnel stage, creative fatigue, landing-page continuity, measurement, and budget constraints before writing.\n\nVERIFIED BUSINESS DATA:\n' + JSON.stringify({name:sel.name,type:sel.type,location:sel.suburb,address:sel.address,services:sel.cats,rating:sel.rating,reviewCount:sel.reviews,website:sel.website || null,phone:sel.phone}, null, 2) + '\n\nWORKING INTELLIGENCE (some fields are estimates and must be labeled as hypotheses):\nGoal: ' + goal + '\nMonthly budget AUD: ' + budget + '\nOpportunity note: ' + sel.insight + '\nPitch angle: ' + sel.angle + '\n' + gInfo + '\n\nSTRATEGY RULES:\n- Do not invent discounts, prices, guarantees, accreditations, conversion rates, or competitor facts.\n- Separate verified facts from strategic hypotheses.\n- Make creative specific to this business category and local buyer intent; avoid generic phrases such as "quality service" and "we care".\n- Google headlines must be 30 characters or fewer and descriptions 90 characters or fewer. Meta copy should include distinct hooks for pain, aspiration, proof, and objection handling.\n- Forecasts must be presented as planning ranges with assumptions, never promises.\n- Include measurement events and a testing plan that can identify why performance changes.\n\nRespond ONLY with valid JSON using this schema:\n{"campaignName":"specific name","objective":"measurable objective","strategySummary":"3-5 sentence strategic rationale","verifiedInputs":["facts used"],"hypotheses":["assumptions to validate"],"offer":"credible offer or CTA without fabricated claims","budgetSplit":"allocation with amounts and percentages","headlines":["8 platform-compliant headlines"],"descriptions":["4 platform-compliant descriptions or primary texts"],"keywords":["12 high-intent terms, empty for Meta if unsuitable"],"negativeKeywords":["8 negatives for Google, empty for Meta"],"audiences":["4 audience segments with intent rationale"],"creativeConcepts":[{"name":"concept","hook":"opening hook","angle":"why it matters","visual":"specific visual direction","cta":"CTA"}],"landingPagePlan":["ordered page sections"],"bidStrategy":"phased bidding approach","adSchedule":"schedule and rationale","measurement":["events and attribution checks"],"experiments":["3 controlled tests with variable and success signal"],"estimatedResults":"planning range with explicit assumptions","quickWins":["3 first actions"]}';
+    requestAnthropic(prompt, 1800, 'campaign')
       .then(function(d) {
         if (d.error) throw new Error(d.error.message);
         var txt = (d.content || []).map(function(b) { return b.text || ''; }).join('');
         return JSON.parse(txt.replace(/```json|```/g, '').trim());
       })
       .then(function(parsed) { setBuilt(parsed); setSaved(function(prev) { return prev.concat([{id:Date.now(), co:sel, platform:platform, data:parsed}]); }); })
-      .catch(function() { var m = getMockCampaign(sel, platform, budget, goal); setBuilt(m); setSaved(function(prev) { return prev.concat([{id:Date.now(), co:sel, platform:platform, data:m}]); }); })
+      .catch(function(error) { setCampaignError(error.message || 'Campaign generation failed.'); })
       .finally(function() { setBuilding(false); });
   }
 
@@ -1771,11 +1930,13 @@ function CampaignsPage(props) {
                     React.createElement('option', {value:'awareness'}, 'Brand Awareness')))),
               React.createElement('button', {onClick:build, disabled:building, style:{width:'100%', padding:11, background: building?'var(--bg4)':'var(--ac)', border:'none', borderRadius:9, color: building?'var(--tx3)':'#fff', fontSize:13, fontWeight:600, cursor: building?'not-allowed':'pointer', fontFamily:'var(--fn)', display:'flex', alignItems:'center', justifyContent:'center', gap:8}},
                 building ? [React.createElement('span', {key:'s', style:{animation:'spin 1s linear infinite', display:'inline-block'}}, '\u27f3'), ' Building Campaign with Claude AI...'] : '\uD83D\uDE80 Build ' + (platform==='google'?'Google Ads':'Meta Ads') + ' Campaign')),
+            campaignError && React.createElement('div', {style:{background:'rgba(245,166,35,.08)', border:'1px solid rgba(245,166,35,.25)', borderRadius:8, color:'var(--am)', padding:'10px 12px', fontSize:12, marginBottom:12}}, campaignError + ' No canned campaign was substituted.'),
             built && React.createElement('div', {className:'fade-up', style:{display:'flex', flexDirection:'column', gap:12}},
               React.createElement('div', {style:card({padding:18, border:'1px solid rgba(59,111,255,.22)'})},
                 React.createElement('div', {style:{fontSize:11, color:'var(--ac2)', fontFamily:'var(--mo)', marginBottom:12}}, '\u26a1 CLAUDE AI - CAMPAIGN BLUEPRINT'),
                 React.createElement('div', {style:{fontSize:18, fontWeight:700, color:'var(--tx)', marginBottom:3}}, built.campaignName),
                 React.createElement('div', {style:{fontSize:12, color:'var(--tx3)', marginBottom:16}}, built.objective),
+                built.strategySummary && React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.6, marginBottom:16}}, built.strategySummary),
                 React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}},
                   [{t:'Budget Split',v:built.budgetSplit,hi:false},{t:'Bid Strategy',v:built.bidStrategy,hi:false},{t:'Ad Schedule',v:built.adSchedule,hi:false},{t:'Expected Results (30 days)',v:built.estimatedResults,hi:true}].map(function(item) {
                     return React.createElement('div', {key:item.t, style:{background: item.hi?'var(--gn2)':'var(--bg3)', border:'1px solid ' + (item.hi?'var(--gn3)':'var(--br)'), borderRadius:8, padding:12}},
@@ -1803,6 +1964,14 @@ function CampaignsPage(props) {
                   return React.createElement('div', {key:i, style:{display:'flex', gap:8, fontSize:13, color:'var(--tx2)', marginBottom:7}},
                     React.createElement('span', {style:{color:'var(--gn)', fontWeight:700, flexShrink:0}}, (i+1) + '.'),
                     w);
+                })),
+              built.creativeConcepts && React.createElement('div', {style:card({padding:16})},
+                React.createElement('div', {style: label()}, 'Creative Concepts'),
+                (built.creativeConcepts || []).map(function(concept, i) {
+                  return React.createElement('div', {key:i, style:{background:'var(--bg3)', border:'1px solid var(--br)', borderRadius:8, padding:12, marginBottom:7}},
+                    React.createElement('div', {style:{fontSize:13, fontWeight:600, color:'var(--tx)', marginBottom:5}}, concept.name),
+                    React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.5}}, concept.hook + ' ' + concept.angle),
+                    React.createElement('div', {style:{fontSize:11, color:'var(--tx3)', marginTop:5}}, 'Visual: ' + concept.visual + ' | CTA: ' + concept.cta));
                 }))))));
 }
 
@@ -1826,23 +1995,35 @@ function getMockCampaign(co, platform, budget, goal) {
 
 function AgentsPage(props) {
   var done = props.done;
+  var [health, setHealth] = useState(null);
+  useEffect(function() {
+    safeConnectorFetch('/api/health').then(setHealth).catch(function(){ setHealth({ok:false}); });
+  }, []);
+  function agentMode(id) {
+    if (id === 'maps') return health && health.googlePlacesConfigured ? ['LIVE','var(--gn)'] : ['SETUP','var(--am)'];
+    if (id === 'meta') return health && health.metaConfigured ? ['LIVE','var(--gn)'] : ['SETUP','var(--am)'];
+    if (id === 'web') return ['LIVE META','var(--gn)'];
+    if (id === 'gmb' || id === 'profile' || id === 'scorer') return ['LOCAL','var(--ac2)'];
+    return ['ESTIMATE','var(--am)'];
+  }
   return React.createElement('div', {style:{padding:20, overflowY:'auto', height:'100%'}},
     React.createElement('div', {style:card({padding:'14px 18px', marginBottom:18, display:'flex', gap:24})},
-      [{label:'Total agents',val:String(AGENT_LIST.length),color:'var(--ac)'},{label:'Status',val:done?'Ready':'Standby',color:done?'var(--gn)':'var(--tx3)'},{label:'Architecture',val:'Sequential',color:'var(--am)'},{label:'AI Model',val:'Claude claude-sonnet-4-20250514',color:'var(--pu)'}].map(function(x) {
+      [{label:'Total agents',val:String(AGENT_LIST.length),color:'var(--ac)'},{label:'Google Places',val:health&&health.googlePlacesConfigured?'Connected':'Check setup',color:health&&health.googlePlacesConfigured?'var(--gn)':'var(--am)'},{label:'Meta API',val:health&&health.metaConfigured?'Connected':'Add later',color:health&&health.metaConfigured?'var(--gn)':'var(--am)'},{label:'AI',val:health&&health.anthropicConfigured?'Connected':'Check setup',color:health&&health.anthropicConfigured?'var(--gn)':'var(--am)'}].map(function(x) {
         return React.createElement('div', {key:x.label},
           React.createElement('div', {style:{fontSize:20, fontWeight:700, fontFamily:'var(--mo)', color:x.color, marginBottom:2}}, x.val),
           React.createElement('div', {style:{fontSize:11, color:'var(--tx3)'}}, x.label));
       })),
     React.createElement('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:16}},
       AGENT_LIST.map(function(ag, i) {
+        var mode = agentMode(ag.id);
         return React.createElement('div', {key:ag.id, className:'fade-up', style:{animationDelay: (i*60) + 'ms', background:'var(--bg2)', border:'1px solid ' + (done ? ag.color + '22' : 'var(--br)'), borderRadius:12, padding:18}},
           React.createElement('div', {style:{display:'flex', alignItems:'flex-start', gap:12, marginBottom:12}},
             React.createElement('div', {style:{fontSize:26, flexShrink:0}}, i===0?'\uD83D\uDDFA\uFE0F':i===1?'\uD83D\uDCCD':i===2?'\uD83D\uDD0E':i===3?'\uD83D\uDCCA':i===4?'\uD83C\uDF10':i===5?'\uD83C\uDFE2':'\u26a1'),
             React.createElement('div', {style:{flex:1}},
               React.createElement('div', {style:{fontSize:14, fontWeight:600, color:'var(--tx)', marginBottom:2}}, ag.name),
               React.createElement('div', {style:{display:'flex', alignItems:'center', gap:5}},
-                React.createElement('div', {style:{width:6, height:6, borderRadius:'50%', background: done?'var(--gn)':'var(--tx3)'}}),
-                React.createElement('span', {style:{fontSize:10, fontFamily:'var(--mo)', color: done?'var(--gn)':'var(--tx3)'}}, done?'READY':'STANDBY'),
+                React.createElement('div', {style:{width:6, height:6, borderRadius:'50%', background:mode[1]}}),
+                React.createElement('span', {style:{fontSize:10, fontFamily:'var(--mo)', color:mode[1]}}, mode[0]),
                 React.createElement('span', {style:{fontSize:10, color:'var(--tx3)', marginLeft:6}}, 'avg ' + ag.time)))),
           React.createElement('div', {style:{fontSize:12, color:'var(--tx2)', lineHeight:1.7, marginBottom:12}}, ag.desc),
           React.createElement('div', {style:{marginBottom:10}},
@@ -1890,6 +2071,7 @@ function SettingsPage() {
   return React.createElement('div', {style:{padding:20, overflowY:'auto', height:'100%', maxWidth:680}},
     React.createElement(Sec, {title:'API Configuration'},
       React.createElement(Fld, {label:'Anthropic API', hint:'Server-side Vercel environment variable used for Outreach, Campaign and Website generation.'}, React.createElement('input', {type:'text', value:'Vercel env: ANTHROPIC_API_KEY', readOnly:true, style:iSt})),
+      React.createElement(Fld, {label:'Fable website model', hint:'Visual website generation uses Fable, with the standard Anthropic model as a compatibility fallback.'}, React.createElement('input', {type:'text', value:'Vercel env: FABLE_MODEL = claude-fable-5', readOnly:true, style:iSt})),
       React.createElement(Fld, {label:'Google Places API', hint:'Server-side Vercel environment variable for real business search.'}, React.createElement('input', {type:'text', value:'Vercel env: GOOGLE_MAPS_API_KEY', readOnly:true, style:iSt})),
       React.createElement(Fld, {label:'Meta Ad Library API', hint:'Server-side Vercel environment variable for supported Meta verification.'}, React.createElement('input', {type:'text', value:'Vercel env: META_ACCESS_TOKEN', readOnly:true, style:iSt}))),
     React.createElement(Sec, {title:'Connector Configuration'},
@@ -1950,6 +2132,7 @@ function App() {
   function onCampaign(co, platform) { setCampaignTarget({company:co, platform:platform}); setView('campaigns'); }
   function onBuildWebsite(co) { setWebsiteTarget(co); setView('webBuilder'); }
   function onStart() { setRunning(true); }
+  function onStop() { setRunning(false); }
   function onDone() { setDone(true); setRunning(false); }
 
   var meta = PAGE_META[view] || ['LeadScout', ''];
@@ -1975,7 +2158,7 @@ function App() {
           done && React.createElement('div', {style:{fontSize:11, fontFamily:'var(--mo)', color:'var(--gn)', background:'var(--gn2)', border:'1px solid var(--gn3)', borderRadius:20, padding:'3px 10px', whiteSpace:'nowrap'}}, '\u25cf ' + (isMobile ? 'Ready' : COMPANIES.length + ' companies profiled')),
           React.createElement('div', {style:{width:30, height:30, borderRadius:'50%', background:'var(--ac)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color:'#fff', flexShrink:0}}, 'U'))),
       React.createElement('div', {style:{flex:1, overflow:'hidden'}},
-        view === 'search'     && React.createElement(SearchPage,        {onDone:onDone, onStart:onStart, onEmail:onEmail, onCampaign:onCampaign, onBuildWebsite:onBuildWebsite}),
+        view === 'search'     && React.createElement(SearchPage,        {onDone:onDone, onStart:onStart, onStop:onStop, onEmail:onEmail, onCampaign:onCampaign, onBuildWebsite:onBuildWebsite}),
         view === 'profiles'   && React.createElement(ProfilesPage,     {done:done, onEmail:onEmail, onCampaign:onCampaign, onBuildWebsite:onBuildWebsite}),
         view === 'adIntel'    && React.createElement(AdIntelPage,      {done:done}),
         view === 'webIntel'   && React.createElement(WebIntelPage,     {done:done, onEmail:onEmail, onCampaign:onCampaign, onBuildWebsite:onBuildWebsite}),

@@ -1,6 +1,30 @@
 const { methodNotAllowed, rateLimit, sendJson } = require('../../lib/vercel-shared');
 
 const ALLOWED_MAX_TOKENS = 4000;
+const TASKS = new Set(['general', 'outreach', 'campaign', 'website']);
+
+function modelForTask(task) {
+  if (task === 'website') return process.env.FABLE_MODEL || 'claude-fable-5';
+  if (task === 'campaign') return process.env.CAMPAIGN_MODEL || process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+  return process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+}
+
+async function createMessage(apiKey, model, prompt, maxTokens) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+  return { response, data: await response.json() };
+}
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return methodNotAllowed(res);
@@ -20,28 +44,31 @@ module.exports = async function handler(req, res) {
   }
 
   const prompt = String(req.body?.prompt || '').trim();
+  const requestedTask = String(req.body?.task || 'general').trim().toLowerCase();
+  const task = TASKS.has(requestedTask) ? requestedTask : 'general';
   const maxTokens = Math.max(100, Math.min(Number(req.body?.maxTokens || 900), ALLOWED_MAX_TOKENS));
   if (!prompt || prompt.length > 30000) {
     return sendJson(res, 400, { ok: false, reason: 'invalid_prompt' });
   }
 
-  const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+  const model = modelForTask(task);
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        messages: [{ role: 'user', content: prompt }]
-      })
+    let result = await createMessage(apiKey, model, prompt, maxTokens);
+    let fallback = false;
+    const fallbackModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+    if (task === 'website' && !result.response.ok && model !== fallbackModel && [400, 404].includes(result.response.status)) {
+      result = await createMessage(apiKey, fallbackModel, prompt, maxTokens);
+      fallback = true;
+    }
+    return sendJson(res, result.response.status, {
+      ...result.data,
+      leadscout: {
+        task,
+        requestedModel: model,
+        usedModel: result.data.model || (fallback ? fallbackModel : model),
+        fallback
+      }
     });
-    const data = await response.json();
-    return sendJson(res, response.status, data);
   } catch (error) {
     return sendJson(res, 502, { ok: false, reason: 'anthropic_request_failed', message: error.message });
   }

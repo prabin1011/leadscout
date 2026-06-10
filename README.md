@@ -22,6 +22,8 @@ Add these variables in **Vercel Project Settings > Environment Variables** for P
 | `META_ACCESS_TOKEN` | none | Meta Ad Library API verification where coverage permits |
 | `META_API_VERSION` | `v25.0` | Meta Graph API version |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Anthropic model used by server-side generation |
+| `FABLE_MODEL` | `claude-fable-5` | Visual website design and frontend generation |
+| `CAMPAIGN_MODEL` | `ANTHROPIC_MODEL` | Campaign strategy and creative generation |
 | `PLACES_RATE_LIMIT` | `10` | Places searches per IP per minute |
 | `PLACES_DAILY_LIMIT` | `250` | Deployment-wide Places safety cap |
 | `PLACES_CACHE_MS` | `900000` | Places cache duration in milliseconds |
@@ -106,3 +108,5 @@ $env:ANTHROPIC_MODEL='claude-sonnet-4-6'
 ```
 
 Anthropic calls go through `/api/anthropic/messages`; the browser never receives the API key.
+
+Website generation first reads public metadata from the selected business website through `/api/website/audit`, then sends verified business facts and design constraints to Fable. If Fable is unavailable for the API account, the backend retries with `ANTHROPIC_MODEL` and reports the model actually used.

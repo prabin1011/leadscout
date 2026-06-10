@@ -1,6 +1,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns').promises;
+const net = require('net');
 
 const PORT = Number(process.env.PORT || 8765);
 const HOST = '127.0.0.1';
@@ -93,6 +95,20 @@ function sanitizeQuery(value, maxLength) {
   return String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
+function normalizePlacesQuery({ query, keyword, location }) {
+  let intent = sanitizeQuery(query || keyword, 180);
+  const area = sanitizeQuery(location, 120);
+  intent = intent
+    .replace(/^(?:please\s+)?(?:search|find|show|look)\s+(?:for\s+|me\s+)?/i, '')
+    .replace(/^places?\s+(?:for\s+)?/i, '')
+    .trim();
+  if (!intent) return '';
+  if (!area) return intent;
+  const normalizedIntent = intent.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ');
+  const normalizedArea = area.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  return normalizedArea && normalizedIntent.includes(normalizedArea) ? intent : `${intent} in ${area}`;
+}
+
 async function handlePlacesSearch(req, res) {
   if (req.method !== 'POST') {
     return sendJson(res, 405, { ok: false, reason: 'method_not_allowed' });
@@ -118,17 +134,23 @@ async function handlePlacesSearch(req, res) {
 
   const raw = await readBody(req);
   const payload = raw ? JSON.parse(raw) : {};
-  const keyword = sanitizeQuery(payload.keyword, 100);
+  const query = sanitizeQuery(payload.query, 180);
+  const keyword = sanitizeQuery(payload.keyword, 180);
   const location = sanitizeQuery(payload.location, 120);
   const count = Math.max(1, Math.min(Number(payload.count || 12), 20));
   const regionCode = sanitizeQuery(payload.regionCode, 2).toUpperCase();
+  const pageToken = sanitizeQuery(payload.pageToken, 1000);
+  const textQuery = normalizePlacesQuery({ query, keyword, location });
 
-  if (!keyword || !location) {
-    return sendJson(res, 400, { ok: false, reason: 'missing_query', message: 'Keyword and location are required.' });
+  if (!textQuery) {
+    return sendJson(res, 400, {
+      ok: false,
+      reason: 'missing_query',
+      message: 'Enter a business, category, service, address, or natural-language Maps search.'
+    });
   }
 
-  const textQuery = `${keyword} in ${location}`;
-  const cacheKey = JSON.stringify({ textQuery: textQuery.toLowerCase(), count, regionCode });
+  const cacheKey = JSON.stringify({ textQuery: textQuery.toLowerCase(), count, regionCode, pageToken });
   const cached = placesCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return sendJson(res, 200, { ...cached.data, cached: true });
@@ -164,13 +186,15 @@ async function handlePlacesSearch(req, res) {
           'places.userRatingCount',
           'places.nationalPhoneNumber',
           'places.websiteUri',
-          'places.regularOpeningHours'
+          'places.regularOpeningHours',
+          'nextPageToken'
         ].join(',')
       },
       body: JSON.stringify({
         textQuery,
         pageSize: count,
         rankPreference: 'RELEVANCE',
+        ...(pageToken ? { pageToken } : {}),
         ...(regionCode ? { regionCode } : {})
       })
     });
@@ -192,6 +216,7 @@ async function handlePlacesSearch(req, res) {
       query: textQuery,
       count: Array.isArray(data.places) ? data.places.length : 0,
       places: data.places || [],
+      nextPageToken: data.nextPageToken || '',
       cached: false
     };
     placesCache.set(cacheKey, { data: result, expiresAt: Date.now() + PLACES_CACHE_MS });
@@ -317,29 +342,149 @@ async function handleAnthropic(req, res) {
   const raw = await readBody(req);
   const payload = raw ? JSON.parse(raw) : {};
   const prompt = String(payload.prompt || '').trim();
+  const task = ['general', 'outreach', 'campaign', 'website'].includes(String(payload.task || '').toLowerCase())
+    ? String(payload.task).toLowerCase()
+    : 'general';
   const maxTokens = Math.max(100, Math.min(Number(payload.maxTokens || 900), 4000));
   if (!prompt || prompt.length > 30000) {
     return sendJson(res, 400, { ok: false, reason: 'invalid_prompt' });
   }
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
-        max_tokens: maxTokens,
-        messages: [{ role: 'user', content: prompt }]
-      })
+    const defaultModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+    const requestedModel = task === 'website'
+      ? (process.env.FABLE_MODEL || 'claude-fable-5')
+      : task === 'campaign'
+        ? (process.env.CAMPAIGN_MODEL || defaultModel)
+        : defaultModel;
+    async function createMessage(model) {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      return { response, data: await response.json(), model };
+    }
+    let result = await createMessage(requestedModel);
+    let fallback = false;
+    if (task === 'website' && !result.response.ok && requestedModel !== defaultModel && [400, 404].includes(result.response.status)) {
+      result = await createMessage(defaultModel);
+      fallback = true;
+    }
+    return sendJson(res, result.response.status, {
+      ...result.data,
+      leadscout: {
+        task,
+        requestedModel,
+        usedModel: result.data.model || result.model,
+        fallback
+      }
     });
-    const data = await response.json();
-    return sendJson(res, response.status, data);
   } catch (error) {
     return sendJson(res, 502, { ok: false, reason: 'anthropic_request_failed', message: error.message });
+  }
+}
+
+function isPrivateAddress(address) {
+  if (net.isIPv4(address)) {
+    const p = address.split('.').map(Number);
+    return p[0] === 10 || p[0] === 127 || p[0] === 0 ||
+      (p[0] === 169 && p[1] === 254) ||
+      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+      (p[0] === 192 && p[1] === 168);
+  }
+  const value = String(address || '').toLowerCase();
+  return value === '::1' || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe80:');
+}
+
+function htmlText(value) {
+  return String(value || '').replace(/<[^>]+>/g, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, ' ').trim();
+}
+
+function htmlMeta(html, key) {
+  const tags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const name = tag.match(/\b(?:name|property)\s*=\s*["']([^"']+)["']/i);
+    const content = tag.match(/\bcontent\s*=\s*["']([^"']*)["']/i);
+    if (name && content && name[1].toLowerCase() === key.toLowerCase()) return htmlText(content[1]);
+  }
+  return '';
+}
+
+async function fetchPublicHtml(initialUrl, signal) {
+  let current = initialUrl;
+  for (let redirect = 0; redirect <= 4; redirect += 1) {
+    const addresses = await dns.lookup(current.hostname, { all: true });
+    if (!addresses.length || addresses.some(item => isPrivateAddress(item.address))) throw new Error('private_address');
+    const response = await fetch(current, {
+      signal,
+      redirect: 'manual',
+      headers: { 'User-Agent': 'LeadScoutWebsiteAudit/1.0', Accept: 'text/html,application/xhtml+xml' }
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location');
+    if (!location) return response;
+    current = new URL(location, current);
+    if (!['http:', 'https:'].includes(current.protocol) || current.username || current.password || current.port) throw new Error('invalid_redirect');
+  }
+  throw new Error('too_many_redirects');
+}
+
+async function handleWebsiteAudit(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, reason: 'method_not_allowed' });
+  const raw = await readBody(req);
+  const payload = raw ? JSON.parse(raw) : {};
+  let target;
+  try {
+    target = new URL(String(payload.url || '').trim());
+    if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.port) throw new Error();
+  } catch {
+    return sendJson(res, 400, { ok: false, reason: 'invalid_url', message: 'A public HTTP or HTTPS website URL is required.' });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetchPublicHtml(target, controller.signal);
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok || !contentType.includes('text/html')) {
+      return sendJson(res, 422, { ok: false, reason: 'website_unavailable', message: `Website returned ${response.status} or non-HTML content.` });
+    }
+    const html = (await response.text()).slice(0, 750_000);
+    const title = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+    const headings = tag => (html.match(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi')) || []).slice(0, tag === 'h1' ? 4 : 8).map(htmlText);
+    return sendJson(res, 200, {
+      ok: true,
+      source: 'public_website_metadata',
+      url: response.url,
+      title: htmlText(title ? title[1] : ''),
+      description: htmlMeta(html, 'description'),
+      ogTitle: htmlMeta(html, 'og:title'),
+      ogDescription: htmlMeta(html, 'og:description'),
+      ogImage: htmlMeta(html, 'og:image'),
+      themeColor: htmlMeta(html, 'theme-color'),
+      h1: headings('h1'),
+      h2: headings('h2'),
+      hasViewport: /<meta\b[^>]*name\s*=\s*["']viewport["']/i.test(html),
+      hasSchema: /application\/ld\+json/i.test(html),
+      hasBookingLanguage: /\b(book|appointment|reserve|schedule|consultation)\b/i.test(html),
+      hasContactForm: /<form\b/i.test(html)
+    });
+  } catch (error) {
+    if (error.message === 'private_address') {
+      return sendJson(res, 400, { ok: false, reason: 'private_address', message: 'Only public websites can be audited.' });
+    }
+    return sendJson(res, 502, { ok: false, reason: 'website_audit_failed', message: error.name === 'AbortError' ? 'Website audit timed out.' : error.message });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -362,6 +507,8 @@ const server = http.createServer(async (req, res) => {
         metaConfigured: Boolean(process.env.META_ACCESS_TOKEN),
         metaApiVersion: META_API_VERSION,
         anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+        anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+        fableModel: process.env.FABLE_MODEL || 'claude-fable-5',
         googlePlacesConfigured: Boolean(GOOGLE_MAPS_API_KEY),
         placesRateLimitPerMinute: PLACES_RATE_LIMIT,
         placesDailyLimit: PLACES_DAILY_LIMIT,
@@ -379,6 +526,10 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/anthropic/messages') {
       return await handleAnthropic(req, res);
+    }
+
+    if (url.pathname === '/api/website/audit') {
+      return await handleWebsiteAudit(req, res);
     }
 
     if (url.pathname === '/' || url.pathname === '/leadscout_v3.html') {
