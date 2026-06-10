@@ -417,6 +417,8 @@ function companiesFromGooglePlaces(places, kw, loc) {
       ? 'Google Places does not list a website. This is a verified website-presence gap; advertising status is still unknown.'
       : 'A website is listed in Google Places. Its metadata can be audited on demand; advertising status is still unknown until a connector verifies it.';
     var verifiedAngle = !website ? 'Website and local conversion foundation' : 'Website metadata and conversion review';
+    var addressParts = String(place.formattedAddress || '').split(',').map(function(part) { return part.trim(); }).filter(Boolean);
+    var inferredArea = addressParts.length > 1 ? addressParts[addressParts.length - 2] : (addressParts[0] || 'Search area');
 
     return Object.assign({}, seed, {
       id: place.id || 'google-' + i,
@@ -424,7 +426,7 @@ function companiesFromGooglePlaces(places, kw, loc) {
       name: displayName,
       av: avatar,
       type: typeName,
-      suburb: loc || (place.formattedAddress || '').split(',').slice(-2, -1)[0].trim() || 'Search area',
+      suburb: loc || inferredArea,
       city: loc || 'Search area',
       rating: rating,
       reviews: reviews,
@@ -517,10 +519,10 @@ function getLogs(kw, loc, count) {
       {t:'success', m:'[WEB AUDITOR] Verification links prepared for available websites.'},
     ],
     scorer: [
-      {t:'info',    m:'[OPP SCORER] Running weighted lead scoring model...'},
-      {t:'agent',   m:'[OPP SCORER] Factoring: ad gaps, spend, reviews, website quality, market position...'},
-      {t:'success', m:'[OPP SCORER] ' + hiN + ' HIGH priority leads identified'},
-      {t:'success', m:'[OPP SCORER] Pipeline ready. Estimated market spend: $' + spend.toLocaleString() + '/mo.'},
+      {t:'info',    m:'[OPP SCORER] Running deterministic opportunity scoring...'},
+      {t:'agent',   m:'[OPP SCORER] Factoring verified website presence, reputation signals, and labeled quality estimates.'},
+      {t:'success', m:'[OPP SCORER] Opportunity priorities calculated without fabricated ad spend.'},
+      {t:'success', m:'[OPP SCORER] Pipeline ready.'},
     ],
   };
 }
@@ -1173,7 +1175,15 @@ function SearchPage(props) {
       seenPlaces.current.add(placeIdentity(place));
     });
     writeStoredJson(STORAGE_KEYS.seenPlaces, Array.from(seenPlaces.current).slice(-2000));
-    COMPANIES = companiesFromGooglePlaces(freshPlaces.slice(0, cntVal), kwVal, locVal);
+    try {
+      COMPANIES = companiesFromGooglePlaces(freshPlaces.slice(0, cntVal), kwVal, locVal);
+    } catch (error) {
+      setAS('maps', 'idle');
+      setRunning(false);
+      if (props.onStop) props.onStop();
+      addLog({t:'warn', m:'[PIPELINE] Could not map the Google Places response: ' + error.message});
+      return;
+    }
     setHistory(saveSearchHistoryEntry({
       query:kwVal,
       location:locVal,
